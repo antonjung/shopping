@@ -1,4 +1,4 @@
-const VERSION = '2026-05-08 build 1';
+const VERSION = 'v1.0';
 
 // ── Firebase config check ─────────────────────────────────────────────────────
 
