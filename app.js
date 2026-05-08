@@ -313,8 +313,8 @@ function renderItems() {
 
   return `
     <div class="list-controls">
-      <input type="search" class="search-input" placeholder="Search…" value="${h(itemsSearch)}"
-        oninput="itemsSearch=this.value;render()" autocorrect="off" spellcheck="false">
+      <input id="items-search" type="search" class="search-input" placeholder="Search…" value="${h(itemsSearch)}"
+        oninput="onSearch(v=>itemsSearch=v,'items-search',this.value)" autocorrect="off" spellcheck="false">
       <button class="sort-btn ${itemsSort==='location'?'active':''}"
         onclick="itemsSort=itemsSort==='name'?'location':'name';render()">
         ${itemsSort === 'location' ? 'By location' : 'By name'}
@@ -399,8 +399,8 @@ function renderMenuDetail() {
 
   const controls = `
     <div class="list-controls" style="margin-bottom:10px">
-      <input type="search" class="search-input" placeholder="Search…" value="${h(menuDetailSearch)}"
-        oninput="menuDetailSearch=this.value;render()" autocorrect="off" spellcheck="false">
+      <input id="menu-search" type="search" class="search-input" placeholder="Search…" value="${h(menuDetailSearch)}"
+        oninput="onSearch(v=>menuDetailSearch=v,'menu-search',this.value)" autocorrect="off" spellcheck="false">
     </div>
     <div class="toggle-row">
       <span class="toggle-label">Selected only</span>
@@ -610,8 +610,8 @@ function renderAddToShop() {
     </div>
     ${shopShowAddMore ? `
       <div class="list-controls" style="margin-bottom:10px">
-        <input type="search" class="search-input" placeholder="Search…" value="${h(shopAddMoreSearch)}"
-          oninput="shopAddMoreSearch=this.value;render()" autocorrect="off" spellcheck="false">
+        <input id="shop-search" type="search" class="search-input" placeholder="Search…" value="${h(shopAddMoreSearch)}"
+          oninput="onSearch(v=>shopAddMoreSearch=v,'shop-search',this.value)" autocorrect="off" spellcheck="false">
       </div>
       <div class="card">${available.map(item => `
         <div class="card-item">
@@ -720,6 +720,13 @@ function checkDupe(name) {
   const existing = db.items().find(i => i.name.toLowerCase() === name.toLowerCase());
   if (!existing) return true;
   return confirm(`"${existing.name}" already exists. Add anyway?`);
+}
+
+function onSearch(setter, id, value) {
+  setter(value);
+  render();
+  const input = el(id);
+  if (input) { input.focus(); try { input.setSelectionRange(value.length, value.length); } catch(e) {} }
 }
 
 function startVoiceInput(inputId) {
