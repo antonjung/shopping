@@ -1,4 +1,4 @@
-const VERSION = 'v1.3';
+const VERSION = 'v1.4';
 
 // ── Firebase config check ─────────────────────────────────────────────────────
 
@@ -788,6 +788,13 @@ document.querySelectorAll('.nav-tab').forEach(tab =>
   tab.addEventListener('click', () => navigate(tab.dataset.tab))
 );
 
+function hideSplash() {
+  const s = document.getElementById('splash');
+  if (!s) return;
+  s.classList.add('hiding');
+  setTimeout(() => s.remove(), 450);
+}
+
 if (useRemote && firebaseConfigured()) {
   remoteLoading = true;
   render();
@@ -799,3 +806,5 @@ if (useRemote && firebaseConfigured()) {
   loadLocal();
   render();
 }
+
+setTimeout(hideSplash, 1200);
