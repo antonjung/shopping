@@ -1,4 +1,4 @@
-const CACHE = 'shopping-v4';
+const CACHE = 'shopping-v5';
 const ASSETS = ['./index.html', './app.css', './app.js', './manifest.json', './icon.svg', './firebase-config.js'];
 
 self.addEventListener('install', e => {

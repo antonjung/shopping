@@ -1,4 +1,4 @@
-const VERSION = 'v1.1';
+const VERSION = 'v1.2';
 
 // ── Firebase config check ─────────────────────────────────────────────────────
 
@@ -362,7 +362,7 @@ function openAddItem() {
     db.addItem(name, el('f-loc').value);
     render(); return true;
   });
-  setTimeout(() => startVoiceInput('f-name'), 80);
+  setTimeout(() => el('f-name')?.focus(), 80);
 }
 
 function openEditItem(id) {
@@ -459,7 +459,7 @@ function openAddItemFromMenu() {
     db.toggleMenuItems(menuDetailId, item.id);
     render(); return true;
   });
-  setTimeout(() => startVoiceInput('f-name'), 80);
+  setTimeout(() => el('f-name')?.focus(), 80);
 }
 
 function openAddMenu() {
@@ -737,14 +737,10 @@ el('modal').addEventListener('click', e => { if (e.target === el('modal')) close
 // ── Item form helpers ─────────────────────────────────────────────────────────
 
 function itemForm(name = '', location = '') {
-  const hasMic = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
   return `
     <div class="form-group">
       <label class="form-label">Name</label>
-      <div class="input-with-btn">
-        <input id="f-name" class="form-input" type="text" value="${h(name)}" placeholder="e.g. Milk" autocapitalize="words">
-        ${hasMic ? `<button type="button" class="mic-btn" onclick="startVoiceInput('f-name')">${iconMic()}</button>` : ''}
-      </div>
+      <input id="f-name" class="form-input" type="text" value="${h(name)}" placeholder="e.g. Milk" autocapitalize="words">
     </div>
     <div class="form-group">
       <label class="form-label">Aisle</label>
@@ -765,21 +761,6 @@ function onSearch(setter, id, value) {
   if (input) { input.focus(); try { input.setSelectionRange(value.length, value.length); } catch(e) {} }
 }
 
-function startVoiceInput(inputId) {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) return;
-  const r = new SR();
-  r.lang = navigator.language || 'en-GB';
-  r.interimResults = false;
-  r.maxAlternatives = 1;
-  r.onresult = e => {
-    const input = el(inputId);
-    if (input) { input.value = e.results[0][0].transcript; input.dispatchEvent(new Event('input')); }
-  };
-  r.onerror = e => { if (e.error !== 'aborted' && e.error !== 'no-speech') console.warn('Voice:', e.error); };
-  r.start();
-}
-
 // ── SVG icons ─────────────────────────────────────────────────────────────────
 
 function iconTrash() {
@@ -790,9 +771,6 @@ function iconEdit() {
 }
 function iconX() {
   return `<svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-}
-function iconMic() {
-  return `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0014 0"/><line x1="12" y1="21" x2="12" y2="17"/><line x1="9" y1="21" x2="15" y2="21"/></svg>`;
 }
 function iconGear() {
   return `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>`;
