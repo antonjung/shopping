@@ -1,3 +1,5 @@
+const VERSION = '2026-05-08 build 1';
+
 // ── Firebase config check ─────────────────────────────────────────────────────
 
 function firebaseConfigured() {
@@ -645,6 +647,7 @@ function openSettings() {
       </div>
     </div>
     ${!configured ? `<p class="settings-note">To enable shared storage, create a free Firebase project and update <strong>firebase-config.js</strong> with your project credentials.</p>` : ''}
+    <p class="settings-version">${VERSION}</p>
   `, () => {
     const selected = document.querySelector('input[name="mode"]:checked')?.value;
     const wantRemote = selected === 'remote';
