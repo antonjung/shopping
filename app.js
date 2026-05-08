@@ -1,4 +1,4 @@
-const VERSION = 'v1.4';
+const VERSION = 'v1.5';
 
 // ── Firebase config check ─────────────────────────────────────────────────────
 
@@ -780,6 +780,11 @@ function iconGear() {
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
+  // Auto-reload when a new service worker takes over, so users always get the latest version
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!reloading) { reloading = true; window.location.reload(); }
+  });
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
