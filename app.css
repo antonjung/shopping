@@ -216,9 +216,10 @@ dialog {
   border-radius: 16px;
   padding: 0;
   width: min(92vw, 420px);
-  max-height: 88dvh;
+  max-height: calc(88dvh - env(safe-area-inset-top));
   overflow: hidden;
   box-shadow: 0 8px 40px rgba(0,0,0,0.22);
+  margin-top: max(env(safe-area-inset-top), 16px);
 }
 dialog[open] {
   display: flex;
