@@ -173,10 +173,20 @@ const db = {
   },
 
   createList(name, menuIds) {
-    const itemIds = [...new Set(
-      menuIds.flatMap(mid => (state.menus.find(m => m.id === mid) || { items: [] }).items)
-    )];
-    const list = { id: uid(), name: name.trim(), items: itemIds.map(id => ({ id, completed: false })) };
+    const itemMenuMap = {};
+    menuIds.forEach(mid => {
+      const menu = state.menus.find(m => m.id === mid);
+      if (!menu) return;
+      menu.items.forEach(itemId => {
+        if (!itemMenuMap[itemId]) itemMenuMap[itemId] = [];
+        itemMenuMap[itemId].push(menu.name);
+      });
+    });
+    const list = {
+      id: uid(),
+      name: name.trim(),
+      items: Object.entries(itemMenuMap).map(([id, menus]) => ({ id, count: menus.length, menus, completed: false }))
+    };
     state.lists.push(list);
     this._persist('lists', list.id, { name: list.name, items: list.items });
     return list;
@@ -219,14 +229,18 @@ function h(str) {
 let currentTab = 'items';
 let menuDetailId = null;
 let menuDetailSelectedOnly = false;
+let menuDetailSearch = '';
 let activeListId = null;
 let shopShowAddMore = false;
+let shopAddMoreSearch = '';
+let itemsSort = 'name';
+let itemsSearch = '';
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 
 function navigate(tab) {
-  if (tab !== 'menus') { menuDetailId = null; menuDetailSelectedOnly = false; }
-  if (tab !== 'shop') shopShowAddMore = false;
+  if (tab !== 'menus') { menuDetailId = null; menuDetailSelectedOnly = false; menuDetailSearch = ''; }
+  if (tab !== 'shop') { shopShowAddMore = false; shopAddMoreSearch = ''; }
   currentTab = tab;
   document.querySelectorAll('.nav-tab').forEach(t =>
     t.classList.toggle('active', t.dataset.tab === tab)
@@ -287,57 +301,58 @@ function render() {
 // ── Items view ────────────────────────────────────────────────────────────────
 
 function renderItems() {
-  const items = [...db.items()].sort((a, b) =>
-    (a.location || '').localeCompare(b.location || '') || a.name.localeCompare(b.name)
+  let items = [...db.items()];
+  if (itemsSearch) {
+    const q = itemsSearch.toLowerCase();
+    items = items.filter(i => i.name.toLowerCase().includes(q) || (i.location||'').toLowerCase().includes(q));
+  }
+  items.sort(itemsSort === 'location'
+    ? (a, b) => (a.location||'').localeCompare(b.location||'') || a.name.localeCompare(b.name)
+    : (a, b) => a.name.localeCompare(b.name)
   );
-  if (!items.length) return `<div class="empty">No items yet.<br>Tap + to add your first item.</div>`;
-  return `<div class="card">${items.map(item => `
-    <div class="card-item">
-      <div class="item-row" onclick="openEditItem('${item.id}')">
-        <span class="item-name">${h(item.name)}</span>
-        ${item.location ? `<span class="item-loc">${h(item.location)}</span>` : ''}
-      </div>
-      <button class="btn-icon btn-danger" onclick="confirmDeleteItem('${item.id}')" aria-label="Delete">
-        ${iconTrash()}
+
+  return `
+    <div class="list-controls">
+      <input type="search" class="search-input" placeholder="Search…" value="${h(itemsSearch)}"
+        oninput="itemsSearch=this.value;render()" autocorrect="off" spellcheck="false">
+      <button class="sort-btn ${itemsSort==='location'?'active':''}"
+        onclick="itemsSort=itemsSort==='name'?'location':'name';render()">
+        ${itemsSort === 'location' ? 'By location' : 'By name'}
       </button>
     </div>
-  `).join('')}</div>`;
+    ${!items.length
+      ? `<div class="empty">${itemsSearch ? 'No matches.' : 'No items yet.<br>Tap + to add your first item.'}</div>`
+      : `<div class="card">${items.map(item => `
+          <div class="card-item">
+            <div class="item-row" onclick="openEditItem('${item.id}')">
+              <span class="item-name">${h(item.name)}</span>
+              ${item.location ? `<span class="item-loc">${h(item.location)}</span>` : ''}
+            </div>
+            <button class="btn-icon btn-danger" onclick="confirmDeleteItem('${item.id}')" aria-label="Delete">
+              ${iconTrash()}
+            </button>
+          </div>`).join('')}</div>`}`;
 }
 
 function openAddItem() {
-  openModal('Add Item', `
-    <div class="form-group">
-      <label class="form-label">Name</label>
-      <input id="f-name" class="form-input" type="text" placeholder="e.g. Milk" autocapitalize="words">
-    </div>
-    <div class="form-group">
-      <label class="form-label">Location / Aisle</label>
-      <input id="f-loc" class="form-input" type="text" placeholder="e.g. Dairy" autocapitalize="words">
-    </div>
-  `, () => {
+  openModal('Add Item', itemForm(), () => {
     const name = el('f-name').value.trim();
     if (!name) { el('f-name').focus(); return false; }
+    if (!checkDupe(name)) return false;
     db.addItem(name, el('f-loc').value);
     render(); return true;
   });
-  setTimeout(() => el('f-name')?.focus(), 80);
+  setTimeout(() => startVoiceInput('f-name'), 80);
 }
 
 function openEditItem(id) {
   const item = db.getItem(id);
   if (!item) return;
-  openModal('Edit Item', `
-    <div class="form-group">
-      <label class="form-label">Name</label>
-      <input id="f-name" class="form-input" type="text" value="${h(item.name)}" autocapitalize="words">
-    </div>
-    <div class="form-group">
-      <label class="form-label">Location / Aisle</label>
-      <input id="f-loc" class="form-input" type="text" value="${h(item.location)}" autocapitalize="words">
-    </div>
-  `, () => {
+  openModal('Edit Item', itemForm(item.name, item.location), () => {
     const name = el('f-name').value.trim();
     if (!name) { el('f-name').focus(); return false; }
+    const dupe = db.items().find(i => i.id !== id && i.name.toLowerCase() === name.toLowerCase());
+    if (dupe && !confirm(`"${dupe.name}" already exists. Save anyway?`)) return false;
     db.updateItem(id, name, el('f-loc').value);
     render(); return true;
   });
@@ -369,24 +384,32 @@ function renderMenus() {
   `).join('')}</div>`;
 }
 
-function openMenuDetail(id) { menuDetailId = id; menuDetailSelectedOnly = false; render(); }
-function closeMenuDetail() { menuDetailId = null; menuDetailSelectedOnly = false; render(); }
+function openMenuDetail(id) { menuDetailId = id; menuDetailSelectedOnly = false; menuDetailSearch = ''; render(); }
+function closeMenuDetail() { menuDetailId = null; menuDetailSelectedOnly = false; menuDetailSearch = ''; render(); }
 
 function renderMenuDetail() {
   const menu = db.getMenu(menuDetailId);
   if (!menu) return '';
   let items = [...db.items()].sort((a, b) => a.name.localeCompare(b.name));
   if (menuDetailSelectedOnly) items = items.filter(i => menu.items.includes(i.id));
+  if (menuDetailSearch) {
+    const q = menuDetailSearch.toLowerCase();
+    items = items.filter(i => i.name.toLowerCase().includes(q));
+  }
 
-  const toggleRow = `
+  const controls = `
+    <div class="list-controls" style="margin-bottom:10px">
+      <input type="search" class="search-input" placeholder="Search…" value="${h(menuDetailSearch)}"
+        oninput="menuDetailSearch=this.value;render()" autocorrect="off" spellcheck="false">
+    </div>
     <div class="toggle-row">
       <span class="toggle-label">Selected only</span>
       <button class="toggle ${menuDetailSelectedOnly ? 'on' : ''}" onclick="menuDetailSelectedOnly=!menuDetailSelectedOnly;render()"></button>
     </div>`;
 
-  if (!items.length) return toggleRow + `<div class="empty" style="padding-top:24px">${menuDetailSelectedOnly ? 'No items selected yet.' : 'No items in catalog yet.<br>Tap + to add one.'}</div>`;
+  if (!items.length) return controls + `<div class="empty" style="padding-top:16px">${menuDetailSearch ? 'No matches.' : menuDetailSelectedOnly ? 'No items selected yet.' : 'No items in catalog yet.<br>Tap + to add one.'}</div>`;
 
-  return toggleRow + `<div class="card">${items.map(item => `
+  return controls + `<div class="card">${items.map(item => `
     <label class="card-item card-check">
       <input type="checkbox" ${menu.items.includes(item.id) ? 'checked' : ''}
         onchange="db.toggleMenuItems('${menuDetailId}','${item.id}');render()">
@@ -398,23 +421,15 @@ function renderMenuDetail() {
 }
 
 function openAddItemFromMenu() {
-  openModal('Add Item', `
-    <div class="form-group">
-      <label class="form-label">Name</label>
-      <input id="f-name" class="form-input" type="text" placeholder="e.g. Milk" autocapitalize="words">
-    </div>
-    <div class="form-group">
-      <label class="form-label">Location / Aisle</label>
-      <input id="f-loc" class="form-input" type="text" placeholder="e.g. Dairy" autocapitalize="words">
-    </div>
-  `, () => {
+  openModal('Add Item', itemForm(), () => {
     const name = el('f-name').value.trim();
     if (!name) { el('f-name').focus(); return false; }
+    if (!checkDupe(name)) return false;
     const item = db.addItem(name, el('f-loc').value);
     db.toggleMenuItems(menuDetailId, item.id);
     render(); return true;
   });
-  setTimeout(() => el('f-name')?.focus(), 80);
+  setTimeout(() => startVoiceInput('f-name'), 80);
 }
 
 function openAddMenu() {
@@ -532,7 +547,10 @@ function renderShop() {
   const list = db.getList(activeListId);
   const allItems = db.items();
   const listItems = list.items
-    .map(li => { const item = allItems.find(i => i.id === li.id); return item ? { ...item, completed: li.completed } : null; })
+    .map(li => {
+      const item = allItems.find(i => i.id === li.id);
+      return item ? { ...item, completed: li.completed, count: li.count || 1, menus: li.menus || [] } : null;
+    })
     .filter(Boolean)
     .sort((a, b) => (a.location || '').localeCompare(b.location || '') || a.name.localeCompare(b.name));
 
@@ -559,7 +577,8 @@ function renderShop() {
               onchange="db.toggleListItem('${activeListId}','${item.id}');render()">
           </label>
           <div class="item-info" style="cursor:default">
-            <div class="item-name">${h(item.name)}</div>
+            <div class="item-name">${h(item.name)}${item.count > 1 ? `<span class="item-count"> ×${item.count}</span>` : ''}</div>
+            ${item.menus.length ? `<div class="item-menus">${h(item.menus.join(' · '))}</div>` : ''}
           </div>
           <button class="btn-icon btn-danger" onclick="db.removeFromList('${activeListId}','${item.id}');render()" aria-label="Remove">
             ${iconX()}
@@ -575,17 +594,26 @@ function renderAddToShop() {
   const list = db.getList(activeListId);
   if (!list) return '';
   const inList = new Set(list.items.map(i => i.id));
-  const available = db.items().filter(i => !inList.has(i.id));
+  let available = db.items().filter(i => !inList.has(i.id));
   if (!available.length) return '';
+
+  if (shopShowAddMore && shopAddMoreSearch) {
+    const q = shopAddMoreSearch.toLowerCase();
+    available = available.filter(i => i.name.toLowerCase().includes(q));
+  }
+  available.sort((a,b) => a.name.localeCompare(b.name));
 
   return `
     <div class="toggle-row" style="margin-top:24px">
       <span class="toggle-label">Add more items</span>
-      <button class="toggle ${shopShowAddMore ? 'on' : ''}" onclick="shopShowAddMore=!shopShowAddMore;render()"></button>
+      <button class="toggle ${shopShowAddMore ? 'on' : ''}" onclick="shopShowAddMore=!shopShowAddMore;shopAddMoreSearch='';render()"></button>
     </div>
-    ${shopShowAddMore ? `<div class="card">${available
-      .sort((a,b) => (a.location||'').localeCompare(b.location||'')||a.name.localeCompare(b.name))
-      .map(item => `
+    ${shopShowAddMore ? `
+      <div class="list-controls" style="margin-bottom:10px">
+        <input type="search" class="search-input" placeholder="Search…" value="${h(shopAddMoreSearch)}"
+          oninput="shopAddMoreSearch=this.value;render()" autocorrect="off" spellcheck="false">
+      </div>
+      <div class="card">${available.map(item => `
         <div class="card-item">
           <div class="item-info" style="cursor:default">
             <div class="item-name">${h(item.name)}</div>
@@ -670,6 +698,45 @@ function _doSave() {
 
 el('modal').addEventListener('click', e => { if (e.target === el('modal')) closeModal(); });
 
+// ── Item form helpers ─────────────────────────────────────────────────────────
+
+function itemForm(name = '', location = '') {
+  const hasMic = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  return `
+    <div class="form-group">
+      <label class="form-label">Name</label>
+      <div class="input-with-btn">
+        <input id="f-name" class="form-input" type="text" value="${h(name)}" placeholder="e.g. Milk" autocapitalize="words">
+        ${hasMic ? `<button type="button" class="mic-btn" onclick="startVoiceInput('f-name')">${iconMic()}</button>` : ''}
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Aisle</label>
+      <input id="f-loc" class="form-input" type="text" inputmode="numeric" value="${h(location)}" placeholder="e.g. 5">
+    </div>`;
+}
+
+function checkDupe(name) {
+  const existing = db.items().find(i => i.name.toLowerCase() === name.toLowerCase());
+  if (!existing) return true;
+  return confirm(`"${existing.name}" already exists. Add anyway?`);
+}
+
+function startVoiceInput(inputId) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return;
+  const r = new SR();
+  r.lang = navigator.language || 'en-GB';
+  r.interimResults = false;
+  r.maxAlternatives = 1;
+  r.onresult = e => {
+    const input = el(inputId);
+    if (input) { input.value = e.results[0][0].transcript; input.dispatchEvent(new Event('input')); }
+  };
+  r.onerror = e => { if (e.error !== 'aborted' && e.error !== 'no-speech') console.warn('Voice:', e.error); };
+  r.start();
+}
+
 // ── SVG icons ─────────────────────────────────────────────────────────────────
 
 function iconTrash() {
@@ -680,6 +747,9 @@ function iconEdit() {
 }
 function iconX() {
   return `<svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+}
+function iconMic() {
+  return `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0014 0"/><line x1="12" y1="21" x2="12" y2="17"/><line x1="9" y1="21" x2="15" y2="21"/></svg>`;
 }
 function iconGear() {
   return `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>`;
