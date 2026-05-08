@@ -123,6 +123,17 @@ body {
 .item-name { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .item-sub { font-size: 13px; color: var(--text-2); margin-top: 2px; }
 
+.item-row {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  min-width: 0;
+}
+.item-row .item-name { flex: 1; }
+.item-loc { font-size: 14px; color: var(--text-2); flex-shrink: 0; max-width: 40%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* ── Buttons ────────────────────────────────────────────────────────────── */
 
 .btn-icon {

@@ -120,7 +120,7 @@ function render() {
         const menu = db.getMenu(menuDetailId);
         el('header-title').textContent = menu ? menu.name : 'Menu';
         el('header-left').innerHTML = `<button class="header-back" onclick="closeMenuDetail()">‹ Menus</button>`;
-        el('header-right').innerHTML = '';
+        el('header-right').innerHTML = `<button class="header-btn" onclick="openAddItemFromMenu()">+</button>`;
         el('main').innerHTML = renderMenuDetail();
       } else {
         el('header-title').textContent = 'Menus';
@@ -155,9 +155,9 @@ function renderItems() {
   if (!items.length) return `<div class="empty">No items yet.<br>Tap + to add your first item.</div>`;
   return `<div class="card">${items.map(item => `
     <div class="card-item">
-      <div class="item-info" onclick="openEditItem('${item.id}')">
-        <div class="item-name">${h(item.name)}</div>
-        ${item.location ? `<div class="item-sub">${h(item.location)}</div>` : ''}
+      <div class="item-row" onclick="openEditItem('${item.id}')">
+        <span class="item-name">${h(item.name)}</span>
+        ${item.location ? `<span class="item-loc">${h(item.location)}</span>` : ''}
       </div>
       <button class="btn-icon btn-danger" onclick="confirmDeleteItem('${item.id}')" aria-label="Delete">
         ${iconTrash()}
@@ -237,30 +237,38 @@ function closeMenuDetail() { menuDetailId = null; render(); }
 function renderMenuDetail() {
   const menu = db.getMenu(menuDetailId);
   if (!menu) return '';
-  const items = [...db.items()].sort((a, b) =>
-    (a.location || '').localeCompare(b.location || '') || a.name.localeCompare(b.name)
-  );
-  if (!items.length) return `<div class="empty">No items in catalog yet.<br>Go to Items to add some.</div>`;
+  const items = [...db.items()].sort((a, b) => a.name.localeCompare(b.name));
+  if (!items.length) return `<div class="empty">No items in catalog yet.<br>Tap + to add one.</div>`;
 
-  const grouped = {};
-  items.forEach(item => {
-    const loc = item.location || 'Other';
-    if (!grouped[loc]) grouped[loc] = [];
-    grouped[loc].push(item);
+  return `<div class="card">${items.map(item => `
+    <label class="card-item card-check">
+      <input type="checkbox" ${menu.items.includes(item.id) ? 'checked' : ''}
+        onchange="db.toggleMenuItems('${menuDetailId}','${item.id}');render()">
+      <div class="item-info" style="cursor:default">
+        <div class="item-name">${h(item.name)}</div>
+      </div>
+    </label>
+  `).join('')}</div>`;
+}
+
+function openAddItemFromMenu() {
+  openModal('Add Item', `
+    <div class="form-group">
+      <label class="form-label">Name</label>
+      <input id="f-name" class="form-input" type="text" placeholder="e.g. Milk" autocapitalize="words">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Location / Aisle</label>
+      <input id="f-loc" class="form-input" type="text" placeholder="e.g. Dairy" autocapitalize="words">
+    </div>
+  `, () => {
+    const name = el('f-name').value.trim();
+    if (!name) { el('f-name').focus(); return false; }
+    const item = db.addItem(name, el('f-loc').value);
+    db.toggleMenuItems(menuDetailId, item.id);
+    render(); return true;
   });
-
-  return Object.entries(grouped).map(([loc, grpItems]) => `
-    <div class="loc-label">${h(loc)}</div>
-    <div class="card">${grpItems.map(item => `
-      <label class="card-item card-check">
-        <input type="checkbox" ${menu.items.includes(item.id) ? 'checked' : ''}
-          onchange="db.toggleMenuItems('${menuDetailId}','${item.id}');render()">
-        <div class="item-info" style="cursor:default">
-          <div class="item-name">${h(item.name)}</div>
-        </div>
-      </label>
-    `).join('')}</div>
-  `).join('');
+  setTimeout(() => el('f-name')?.focus(), 80);
 }
 
 function openAddMenu() {
