@@ -84,7 +84,6 @@ async function switchToRemote() {
   try {
     await loadFirebaseScripts();
     if (!initFirestoreDb()) return false;
-    state = { items: [], menus: [], lists: [] };
     useRemote = true;
     localStorage.setItem('dataMode', 'remote');
     startListeners();
@@ -219,12 +218,15 @@ function h(str) {
 
 let currentTab = 'items';
 let menuDetailId = null;
+let menuDetailSelectedOnly = false;
 let activeListId = null;
+let shopShowAddMore = false;
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 
 function navigate(tab) {
-  if (tab !== 'menus') menuDetailId = null;
+  if (tab !== 'menus') { menuDetailId = null; menuDetailSelectedOnly = false; }
+  if (tab !== 'shop') shopShowAddMore = false;
   currentTab = tab;
   document.querySelectorAll('.nav-tab').forEach(t =>
     t.classList.toggle('active', t.dataset.tab === tab)
@@ -367,15 +369,24 @@ function renderMenus() {
   `).join('')}</div>`;
 }
 
-function openMenuDetail(id) { menuDetailId = id; render(); }
-function closeMenuDetail() { menuDetailId = null; render(); }
+function openMenuDetail(id) { menuDetailId = id; menuDetailSelectedOnly = false; render(); }
+function closeMenuDetail() { menuDetailId = null; menuDetailSelectedOnly = false; render(); }
 
 function renderMenuDetail() {
   const menu = db.getMenu(menuDetailId);
   if (!menu) return '';
-  const items = [...db.items()].sort((a, b) => a.name.localeCompare(b.name));
-  if (!items.length) return `<div class="empty">No items in catalog yet.<br>Tap + to add one.</div>`;
-  return `<div class="card">${items.map(item => `
+  let items = [...db.items()].sort((a, b) => a.name.localeCompare(b.name));
+  if (menuDetailSelectedOnly) items = items.filter(i => menu.items.includes(i.id));
+
+  const toggleRow = `
+    <div class="toggle-row">
+      <span class="toggle-label">Selected only</span>
+      <button class="toggle ${menuDetailSelectedOnly ? 'on' : ''}" onclick="menuDetailSelectedOnly=!menuDetailSelectedOnly;render()"></button>
+    </div>`;
+
+  if (!items.length) return toggleRow + `<div class="empty" style="padding-top:24px">${menuDetailSelectedOnly ? 'No items selected yet.' : 'No items in catalog yet.<br>Tap + to add one.'}</div>`;
+
+  return toggleRow + `<div class="card">${items.map(item => `
     <label class="card-item card-check">
       <input type="checkbox" ${menu.items.includes(item.id) ? 'checked' : ''}
         onchange="db.toggleMenuItems('${menuDetailId}','${item.id}');render()">
@@ -461,7 +472,7 @@ function renderLists() {
   }).join('')}</div>`;
 }
 
-function startShopping(listId) { activeListId = listId; navigate('shop'); }
+function startShopping(listId) { activeListId = listId; shopShowAddMore = false; navigate('shop'); }
 
 function openNewList() {
   const menus = db.menus();
@@ -566,19 +577,22 @@ function renderAddToShop() {
   const inList = new Set(list.items.map(i => i.id));
   const available = db.items().filter(i => !inList.has(i.id));
   if (!available.length) return '';
+
   return `
-    <div class="loc-label" style="margin-top:24px">Add more items</div>
-    <div class="card">${available
+    <div class="toggle-row" style="margin-top:24px">
+      <span class="toggle-label">Add more items</span>
+      <button class="toggle ${shopShowAddMore ? 'on' : ''}" onclick="shopShowAddMore=!shopShowAddMore;render()"></button>
+    </div>
+    ${shopShowAddMore ? `<div class="card">${available
       .sort((a,b) => (a.location||'').localeCompare(b.location||'')||a.name.localeCompare(b.name))
       .map(item => `
         <div class="card-item">
           <div class="item-info" style="cursor:default">
             <div class="item-name">${h(item.name)}</div>
-            ${item.location ? `<div class="item-sub">${h(item.location)}</div>` : ''}
           </div>
           <button class="btn-text" onclick="db.addItemToList('${activeListId}','${item.id}');render()">Add</button>
         </div>
-    `).join('')}</div>
+      `).join('')}</div>` : ''}
   `;
 }
 
@@ -611,11 +625,14 @@ function openSettings() {
     if (wantRemote) {
       if (!configured) { alert('Firebase not configured.'); return false; }
       if (!confirm('Switch to shared data?\n\nYour local data stays on this device — it won\'t be copied to Firebase.')) return false;
-      render(); // show loading immediately
+      state = { items: [], menus: [], lists: [] };
+      remoteLoading = true;
       switchToRemote().then(ok => {
         if (!ok) {
+          remoteLoading = false;
           useRemote = false;
           localStorage.setItem('dataMode', 'local');
+          loadLocal();
           alert('Could not connect to Firebase. Check your config.');
           render();
         }
@@ -645,7 +662,7 @@ function openModal(title, body, onSave) {
   el('modal').showModal();
 }
 
-function closeModal() { el('modal').close(); _saveHandler = null; }
+function closeModal() { el('modal').close(); _saveHandler = null; render(); }
 
 function _doSave() {
   if (_saveHandler && _saveHandler() !== false) closeModal();
