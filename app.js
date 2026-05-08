@@ -1,4 +1,4 @@
-const VERSION = 'v1.0';
+const VERSION = 'v1.1';
 
 // ── Firebase config check ─────────────────────────────────────────────────────
 
@@ -136,10 +136,9 @@ const db = {
   deleteItem(id) {
     state.items = state.items.filter(i => i.id !== id);
     state.menus.forEach(m => {
-      if (m.items.includes(id)) {
-        m.items = m.items.filter(i => i !== id);
-        this._persist('menus', m.id, { name: m.name, items: m.items });
-      }
+      const before = m.items.length;
+      m.items = m.items.filter(mi => (typeof mi === 'string' ? mi : mi.id) !== id);
+      if (m.items.length !== before) this._persist('menus', m.id, { name: m.name, items: m.items });
     });
     state.lists.forEach(l => {
       if (l.items.some(i => i.id === id)) {
@@ -169,25 +168,37 @@ const db = {
   toggleMenuItems(menuId, itemId) {
     const m = state.menus.find(m => m.id === menuId);
     if (!m) return;
-    const idx = m.items.indexOf(itemId);
-    if (idx === -1) m.items.push(itemId); else m.items.splice(idx, 1);
+    m.items = m.items.map(mi => typeof mi === 'string' ? { id: mi, qty: 1 } : mi);
+    const idx = m.items.findIndex(mi => mi.id === itemId);
+    if (idx === -1) m.items.push({ id: itemId, qty: 1 }); else m.items.splice(idx, 1);
+    this._persist('menus', menuId, { name: m.name, items: m.items });
+  },
+  setMenuItemQty(menuId, itemId, qty) {
+    const m = state.menus.find(m => m.id === menuId);
+    if (!m) return;
+    m.items = m.items.map(mi => typeof mi === 'string' ? { id: mi, qty: 1 } : mi);
+    const mi = m.items.find(mi => mi.id === itemId);
+    if (mi) mi.qty = Math.max(1, qty);
     this._persist('menus', menuId, { name: m.name, items: m.items });
   },
 
   createList(name, menuIds) {
-    const itemMenuMap = {};
+    const itemMap = {};
     menuIds.forEach(mid => {
       const menu = state.menus.find(m => m.id === mid);
       if (!menu) return;
-      menu.items.forEach(itemId => {
-        if (!itemMenuMap[itemId]) itemMenuMap[itemId] = [];
-        itemMenuMap[itemId].push(menu.name);
+      menu.items.forEach(mi => {
+        const iid = typeof mi === 'string' ? mi : mi.id;
+        const qty = typeof mi === 'string' ? 1 : (mi.qty || 1);
+        if (!itemMap[iid]) itemMap[iid] = { qty: 0, menus: [] };
+        itemMap[iid].qty += qty;
+        itemMap[iid].menus.push(menu.name);
       });
     });
     const list = {
       id: uid(),
       name: name.trim(),
-      items: Object.entries(itemMenuMap).map(([id, menus]) => ({ id, count: menus.length, menus, completed: false }))
+      items: Object.entries(itemMap).map(([id, { qty, menus }]) => ({ id, qty, menus, completed: false }))
     };
     state.lists.push(list);
     this._persist('lists', list.id, { name: list.name, items: list.items });
@@ -200,7 +211,7 @@ const db = {
   addItemToList(listId, itemId) {
     const l = state.lists.find(l => l.id === listId);
     if (!l || l.items.find(i => i.id === itemId)) return;
-    l.items.push({ id: itemId, completed: false });
+    l.items.push({ id: itemId, qty: 1, completed: false });
     this._persist('lists', listId, { name: l.name, items: l.items });
   },
   removeFromList(listId, itemId) {
@@ -214,6 +225,13 @@ const db = {
     if (!l) return;
     const item = l.items.find(i => i.id === itemId);
     if (item) item.completed = !item.completed;
+    this._persist('lists', listId, { name: l.name, items: l.items });
+  },
+  setListItemQty(listId, itemId, qty) {
+    const l = state.lists.find(l => l.id === listId);
+    if (!l) return;
+    const li = l.items.find(i => i.id === itemId);
+    if (li) li.qty = Math.max(1, qty);
     this._persist('lists', listId, { name: l.name, items: l.items });
   },
 };
@@ -392,8 +410,10 @@ function closeMenuDetail() { menuDetailId = null; menuDetailSelectedOnly = false
 function renderMenuDetail() {
   const menu = db.getMenu(menuDetailId);
   if (!menu) return '';
+  const menuItemsNorm = menu.items.map(mi => typeof mi === 'string' ? { id: mi, qty: 1 } : mi);
+  const checkedMap = new Map(menuItemsNorm.map(mi => [mi.id, mi.qty || 1]));
   let items = [...db.items()].sort((a, b) => a.name.localeCompare(b.name));
-  if (menuDetailSelectedOnly) items = items.filter(i => menu.items.includes(i.id));
+  if (menuDetailSelectedOnly) items = items.filter(i => checkedMap.has(i.id));
   if (menuDetailSearch) {
     const q = menuDetailSearch.toLowerCase();
     items = items.filter(i => i.name.toLowerCase().includes(q));
@@ -411,15 +431,23 @@ function renderMenuDetail() {
 
   if (!items.length) return controls + `<div class="empty" style="padding-top:16px">${menuDetailSearch ? 'No matches.' : menuDetailSelectedOnly ? 'No items selected yet.' : 'No items in catalog yet.<br>Tap + to add one.'}</div>`;
 
-  return controls + `<div class="card">${items.map(item => `
+  return controls + `<div class="card">${items.map(item => {
+    const checked = checkedMap.has(item.id);
+    const qty = checkedMap.get(item.id) || 1;
+    return `
     <label class="card-item card-check">
-      <input type="checkbox" ${menu.items.includes(item.id) ? 'checked' : ''}
+      <input type="checkbox" ${checked ? 'checked' : ''}
         onchange="db.toggleMenuItems('${menuDetailId}','${item.id}');render()">
       <div class="item-info" style="cursor:default">
         <div class="item-name">${h(item.name)}</div>
       </div>
-    </label>
-  `).join('')}</div>`;
+      ${checked ? `<div class="qty-stepper">
+        <button class="qty-btn" onclick="event.stopPropagation();event.preventDefault();db.setMenuItemQty('${menuDetailId}','${item.id}',${qty - 1});render()" ${qty <= 1 ? 'disabled' : ''}>−</button>
+        <span class="qty-val">${qty}</span>
+        <button class="qty-btn" onclick="event.stopPropagation();event.preventDefault();db.setMenuItemQty('${menuDetailId}','${item.id}',${qty + 1});render()">+</button>
+      </div>` : ''}
+    </label>`;
+  }).join('')}</div>`;
 }
 
 function openAddItemFromMenu() {
@@ -551,7 +579,7 @@ function renderShop() {
   const listItems = list.items
     .map(li => {
       const item = allItems.find(i => i.id === li.id);
-      return item ? { ...item, completed: li.completed, count: li.count || 1, menus: li.menus || [] } : null;
+      return item ? { ...item, completed: li.completed, qty: li.qty || li.count || 1, menus: li.menus || [] } : null;
     })
     .filter(Boolean)
     .sort((a, b) => (a.location || '').localeCompare(b.location || '') || a.name.localeCompare(b.name));
@@ -579,8 +607,13 @@ function renderShop() {
               onchange="db.toggleListItem('${activeListId}','${item.id}');render()">
           </label>
           <div class="item-info" style="cursor:default">
-            <div class="item-name">${h(item.name)}${item.count > 1 ? `<span class="item-count"> ×${item.count}</span>` : ''}</div>
+            <div class="item-name">${h(item.name)}</div>
             ${item.menus.length ? `<div class="item-menus">${h(item.menus.join(' · '))}</div>` : ''}
+          </div>
+          <div class="qty-stepper">
+            <button class="qty-btn" onclick="db.setListItemQty('${activeListId}','${item.id}',${item.qty - 1});render()" ${item.qty <= 1 ? 'disabled' : ''}>−</button>
+            <span class="qty-val">${item.qty}</span>
+            <button class="qty-btn" onclick="db.setListItemQty('${activeListId}','${item.id}',${item.qty + 1});render()">+</button>
           </div>
           <button class="btn-icon btn-danger" onclick="db.removeFromList('${activeListId}','${item.id}');render()" aria-label="Remove">
             ${iconX()}
