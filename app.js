@@ -1,97 +1,227 @@
-// ── Data layer ───────────────────────────────────────────────────────────────
+// ── Firebase config check ─────────────────────────────────────────────────────
 
-const db = (() => {
-  function load() {
-    try { return JSON.parse(localStorage.getItem('shopping')) || { items: [], menus: [], lists: [] }; }
-    catch { return { items: [], menus: [], lists: [] }; }
-  }
-  let d = load();
-  function save() { localStorage.setItem('shopping', JSON.stringify(d)); }
+function firebaseConfigured() {
+  return !!(window.firebaseConfig && window.firebaseConfig.apiKey !== 'YOUR_API_KEY');
+}
 
-  return {
-    // Items
-    items: () => d.items,
-    getItem: id => d.items.find(i => i.id === id),
-    addItem(name, location) {
-      const item = { id: uid(), name: name.trim(), location: location.trim() };
-      d.items.push(item); save(); return item;
-    },
-    updateItem(id, name, location) {
-      const i = d.items.find(i => i.id === id);
-      if (i) { i.name = name.trim(); i.location = location.trim(); save(); }
-    },
-    deleteItem(id) {
-      d.items = d.items.filter(i => i.id !== id);
-      d.menus.forEach(m => { m.items = m.items.filter(i => i !== id); });
-      d.lists.forEach(l => { l.items = l.items.filter(i => i.id !== id); });
-      save();
-    },
+// ── Shared state ──────────────────────────────────────────────────────────────
 
-    // Menus
-    menus: () => d.menus,
-    getMenu: id => d.menus.find(m => m.id === id),
-    addMenu(name) {
-      const menu = { id: uid(), name: name.trim(), items: [] };
-      d.menus.push(menu); save(); return menu;
-    },
-    updateMenu(id, name) {
-      const m = d.menus.find(m => m.id === id);
-      if (m) { m.name = name.trim(); save(); }
-    },
-    deleteMenu(id) { d.menus = d.menus.filter(m => m.id !== id); save(); },
-    toggleMenuItems(menuId, itemId) {
-      const m = d.menus.find(m => m.id === menuId);
-      if (!m) return;
-      const idx = m.items.indexOf(itemId);
-      if (idx === -1) m.items.push(itemId); else m.items.splice(idx, 1);
-      save();
-    },
+let state = { items: [], menus: [], lists: [] };
+let useRemote = localStorage.getItem('dataMode') === 'remote';
+let firestoreDb = null;
+let unsubscribers = [];
+let remoteLoading = false;
 
-    // Lists
-    lists: () => d.lists,
-    getList: id => d.lists.find(l => l.id === id),
-    createList(name, menuIds) {
-      const itemIds = [...new Set(
-        menuIds.flatMap(mid => (d.menus.find(m => m.id === mid) || { items: [] }).items)
-      )];
-      const list = { id: uid(), name: name.trim(), items: itemIds.map(id => ({ id, completed: false })) };
-      d.lists.push(list); save(); return list;
-    },
-    deleteList(id) { d.lists = d.lists.filter(l => l.id !== id); save(); },
-    addItemToList(listId, itemId) {
-      const l = d.lists.find(l => l.id === listId);
-      if (!l || l.items.find(i => i.id === itemId)) return;
-      l.items.push({ id: itemId, completed: false }); save();
-    },
-    removeFromList(listId, itemId) {
-      const l = d.lists.find(l => l.id === listId);
-      if (l) { l.items = l.items.filter(i => i.id !== itemId); save(); }
-    },
-    toggleListItem(listId, itemId) {
-      const l = d.lists.find(l => l.id === listId);
-      if (!l) return;
-      const i = l.items.find(i => i.id === itemId);
-      if (i) { i.completed = !i.completed; save(); }
-    },
-  };
-})();
+// ── Local storage ─────────────────────────────────────────────────────────────
 
-// ── Utilities ────────────────────────────────────────────────────────────────
+function loadLocal() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('shopping'));
+    if (saved) { state.items = saved.items || []; state.menus = saved.menus || []; state.lists = saved.lists || []; }
+  } catch {}
+}
+
+function saveLocal() {
+  localStorage.setItem('shopping', JSON.stringify(state));
+}
+
+// ── Firebase / remote ─────────────────────────────────────────────────────────
+
+function loadFirebaseScripts() {
+  if (window.firebase) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const s1 = document.createElement('script');
+    s1.src = 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js';
+    s1.onerror = reject;
+    s1.onload = () => {
+      const s2 = document.createElement('script');
+      s2.src = 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js';
+      s2.onload = resolve;
+      s2.onerror = reject;
+      document.head.appendChild(s2);
+    };
+    document.head.appendChild(s1);
+  });
+}
+
+function initFirestoreDb() {
+  try {
+    if (!firebase.apps.length) firebase.initializeApp(window.firebaseConfig);
+    firestoreDb = firebase.firestore();
+    return true;
+  } catch { return false; }
+}
+
+function startListeners() {
+  if (!firestoreDb) return;
+  remoteLoading = true;
+  let ready = 0;
+  const onReady = () => { if (++ready === 3) { remoteLoading = false; } };
+
+  unsubscribers = [
+    firestoreDb.collection('items').onSnapshot(snap => {
+      state.items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      onReady(); render();
+    }, () => { remoteLoading = false; render(); }),
+    firestoreDb.collection('menus').onSnapshot(snap => {
+      state.menus = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      onReady(); render();
+    }),
+    firestoreDb.collection('lists').onSnapshot(snap => {
+      state.lists = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      onReady(); render();
+    }),
+  ];
+}
+
+function stopListeners() {
+  unsubscribers.forEach(u => u());
+  unsubscribers = [];
+  remoteLoading = false;
+}
+
+async function switchToRemote() {
+  try {
+    await loadFirebaseScripts();
+    if (!initFirestoreDb()) return false;
+    state = { items: [], menus: [], lists: [] };
+    useRemote = true;
+    localStorage.setItem('dataMode', 'remote');
+    startListeners();
+    return true;
+  } catch { return false; }
+}
+
+function switchToLocal() {
+  stopListeners();
+  firestoreDb = null;
+  useRemote = false;
+  localStorage.setItem('dataMode', 'local');
+  loadLocal();
+  render();
+}
+
+// ── db object ─────────────────────────────────────────────────────────────────
+
+const db = {
+  items: () => state.items,
+  getItem: id => state.items.find(i => i.id === id),
+  menus: () => state.menus,
+  getMenu: id => state.menus.find(m => m.id === id),
+  lists: () => state.lists,
+  getList: id => state.lists.find(l => l.id === id),
+
+  _persist(col, id, data) {
+    if (useRemote && firestoreDb) firestoreDb.collection(col).doc(id).set(data);
+    else saveLocal();
+  },
+  _remove(col, id) {
+    if (useRemote && firestoreDb) firestoreDb.collection(col).doc(id).delete();
+    else saveLocal();
+  },
+
+  addItem(name, location) {
+    const item = { id: uid(), name: name.trim(), location: location.trim() };
+    state.items.push(item);
+    this._persist('items', item.id, { name: item.name, location: item.location });
+    return item;
+  },
+  updateItem(id, name, location) {
+    const i = state.items.find(i => i.id === id);
+    if (!i) return;
+    i.name = name.trim(); i.location = location.trim();
+    this._persist('items', id, { name: i.name, location: i.location });
+  },
+  deleteItem(id) {
+    state.items = state.items.filter(i => i.id !== id);
+    state.menus.forEach(m => {
+      if (m.items.includes(id)) {
+        m.items = m.items.filter(i => i !== id);
+        this._persist('menus', m.id, { name: m.name, items: m.items });
+      }
+    });
+    state.lists.forEach(l => {
+      if (l.items.some(i => i.id === id)) {
+        l.items = l.items.filter(i => i.id !== id);
+        this._persist('lists', l.id, { name: l.name, items: l.items });
+      }
+    });
+    this._remove('items', id);
+  },
+
+  addMenu(name) {
+    const menu = { id: uid(), name: name.trim(), items: [] };
+    state.menus.push(menu);
+    this._persist('menus', menu.id, { name: menu.name, items: [] });
+    return menu;
+  },
+  updateMenu(id, name) {
+    const m = state.menus.find(m => m.id === id);
+    if (!m) return;
+    m.name = name.trim();
+    this._persist('menus', id, { name: m.name, items: m.items });
+  },
+  deleteMenu(id) {
+    state.menus = state.menus.filter(m => m.id !== id);
+    this._remove('menus', id);
+  },
+  toggleMenuItems(menuId, itemId) {
+    const m = state.menus.find(m => m.id === menuId);
+    if (!m) return;
+    const idx = m.items.indexOf(itemId);
+    if (idx === -1) m.items.push(itemId); else m.items.splice(idx, 1);
+    this._persist('menus', menuId, { name: m.name, items: m.items });
+  },
+
+  createList(name, menuIds) {
+    const itemIds = [...new Set(
+      menuIds.flatMap(mid => (state.menus.find(m => m.id === mid) || { items: [] }).items)
+    )];
+    const list = { id: uid(), name: name.trim(), items: itemIds.map(id => ({ id, completed: false })) };
+    state.lists.push(list);
+    this._persist('lists', list.id, { name: list.name, items: list.items });
+    return list;
+  },
+  deleteList(id) {
+    state.lists = state.lists.filter(l => l.id !== id);
+    this._remove('lists', id);
+  },
+  addItemToList(listId, itemId) {
+    const l = state.lists.find(l => l.id === listId);
+    if (!l || l.items.find(i => i.id === itemId)) return;
+    l.items.push({ id: itemId, completed: false });
+    this._persist('lists', listId, { name: l.name, items: l.items });
+  },
+  removeFromList(listId, itemId) {
+    const l = state.lists.find(l => l.id === listId);
+    if (!l) return;
+    l.items = l.items.filter(i => i.id !== itemId);
+    this._persist('lists', listId, { name: l.name, items: l.items });
+  },
+  toggleListItem(listId, itemId) {
+    const l = state.lists.find(l => l.id === listId);
+    if (!l) return;
+    const item = l.items.find(i => i.id === itemId);
+    if (item) item.completed = !item.completed;
+    this._persist('lists', listId, { name: l.name, items: l.items });
+  },
+};
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 function el(id) { return document.getElementById(id); }
-
 function h(str) {
   return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ── State ────────────────────────────────────────────────────────────────────
+// ── UI state ──────────────────────────────────────────────────────────────────
 
 let currentTab = 'items';
 let menuDetailId = null;
 let activeListId = null;
 
-// ── Navigation ───────────────────────────────────────────────────────────────
+// ── Navigation ────────────────────────────────────────────────────────────────
 
 function navigate(tab) {
   if (tab !== 'menus') menuDetailId = null;
@@ -102,11 +232,17 @@ function navigate(tab) {
   render();
 }
 
-// ── Render ───────────────────────────────────────────────────────────────────
+// ── Render ────────────────────────────────────────────────────────────────────
 
 function render() {
-  el('header-left').innerHTML = '';
+  el('header-left').innerHTML = `<button class="settings-btn" onclick="openSettings()">${iconGear()}</button>`;
   el('header-right').innerHTML = '<button class="header-btn" id="header-action">+</button>';
+
+  if (remoteLoading) {
+    el('header-title').textContent = { items:'Items', menus:'Menus', lists:'Lists', shop:'Shop' }[currentTab] || '';
+    el('main').innerHTML = `<div class="empty">Connecting to shared storage…</div>`;
+    return;
+  }
 
   switch (currentTab) {
     case 'items':
@@ -146,7 +282,7 @@ function render() {
   }
 }
 
-// ── Items view ───────────────────────────────────────────────────────────────
+// ── Items view ────────────────────────────────────────────────────────────────
 
 function renderItems() {
   const items = [...db.items()].sort((a, b) =>
@@ -210,7 +346,7 @@ function confirmDeleteItem(id) {
   if (item && confirm(`Delete "${item.name}"?`)) { db.deleteItem(id); render(); }
 }
 
-// ── Menus view ───────────────────────────────────────────────────────────────
+// ── Menus view ────────────────────────────────────────────────────────────────
 
 function renderMenus() {
   const menus = db.menus();
@@ -239,7 +375,6 @@ function renderMenuDetail() {
   if (!menu) return '';
   const items = [...db.items()].sort((a, b) => a.name.localeCompare(b.name));
   if (!items.length) return `<div class="empty">No items in catalog yet.<br>Tap + to add one.</div>`;
-
   return `<div class="card">${items.map(item => `
     <label class="card-item card-check">
       <input type="checkbox" ${menu.items.includes(item.id) ? 'checked' : ''}
@@ -305,7 +440,7 @@ function confirmDeleteMenu(id) {
   if (menu && confirm(`Delete "${menu.name}"?`)) { db.deleteMenu(id); render(); }
 }
 
-// ── Lists view ───────────────────────────────────────────────────────────────
+// ── Lists view ────────────────────────────────────────────────────────────────
 
 function renderLists() {
   const lists = db.lists();
@@ -364,7 +499,7 @@ function confirmDeleteList(id) {
   }
 }
 
-// ── Shop view ────────────────────────────────────────────────────────────────
+// ── Shop view ─────────────────────────────────────────────────────────────────
 
 function renderShop() {
   if (!activeListId || !db.getList(activeListId)) {
@@ -399,33 +534,29 @@ function renderShop() {
     grouped[loc].push(item);
   });
 
-  const groupHtml = Object.entries(grouped).map(([loc, items]) => `
-    <div class="loc-label">${h(loc)}</div>
-    <div class="card">${items.map(item => `
-      <div class="card-item shop-item ${item.completed ? 'done' : ''}">
-        <label class="shop-check">
-          <input type="checkbox" ${item.completed ? 'checked' : ''}
-            onchange="db.toggleListItem('${activeListId}','${item.id}');render()">
-        </label>
-        <div class="item-info" style="cursor:default">
-          <div class="item-name">${h(item.name)}</div>
-        </div>
-        <button class="btn-icon btn-danger" onclick="db.removeFromList('${activeListId}','${item.id}');render()" aria-label="Remove">
-          ${iconX()}
-        </button>
-      </div>
-    `).join('')}</div>
-  `).join('');
-
-  const addHtml = renderAddToShop();
-
   return `
     <div class="shop-bar">
       <div class="shop-bar-name">${h(list.name)}</div>
       <div class="shop-bar-progress">${done}/${listItems.length}</div>
     </div>
-    ${listItems.length ? groupHtml : '<div class="empty">List is empty.</div>'}
-    ${addHtml}
+    ${listItems.length ? Object.entries(grouped).map(([loc, items]) => `
+      <div class="loc-label">${h(loc)}</div>
+      <div class="card">${items.map(item => `
+        <div class="card-item shop-item ${item.completed ? 'done' : ''}">
+          <label class="shop-check">
+            <input type="checkbox" ${item.completed ? 'checked' : ''}
+              onchange="db.toggleListItem('${activeListId}','${item.id}');render()">
+          </label>
+          <div class="item-info" style="cursor:default">
+            <div class="item-name">${h(item.name)}</div>
+          </div>
+          <button class="btn-icon btn-danger" onclick="db.removeFromList('${activeListId}','${item.id}');render()" aria-label="Remove">
+            ${iconX()}
+          </button>
+        </div>
+      `).join('')}</div>
+    `).join('') : '<div class="empty">List is empty.</div>'}
+    ${renderAddToShop()}
   `;
 }
 
@@ -437,19 +568,67 @@ function renderAddToShop() {
   if (!available.length) return '';
   return `
     <div class="loc-label" style="margin-top:24px">Add more items</div>
-    <div class="card">${available.sort((a,b) => (a.location||'').localeCompare(b.location||'')||a.name.localeCompare(b.name)).map(item => `
-      <div class="card-item">
-        <div class="item-info" style="cursor:default">
-          <div class="item-name">${h(item.name)}</div>
-          ${item.location ? `<div class="item-sub">${h(item.location)}</div>` : ''}
+    <div class="card">${available
+      .sort((a,b) => (a.location||'').localeCompare(b.location||'')||a.name.localeCompare(b.name))
+      .map(item => `
+        <div class="card-item">
+          <div class="item-info" style="cursor:default">
+            <div class="item-name">${h(item.name)}</div>
+            ${item.location ? `<div class="item-sub">${h(item.location)}</div>` : ''}
+          </div>
+          <button class="btn-text" onclick="db.addItemToList('${activeListId}','${item.id}');render()">Add</button>
         </div>
-        <button class="btn-text" onclick="db.addItemToList('${activeListId}','${item.id}');render()">Add</button>
-      </div>
     `).join('')}</div>
   `;
 }
 
-// ── Modal ────────────────────────────────────────────────────────────────────
+// ── Settings ──────────────────────────────────────────────────────────────────
+
+function openSettings() {
+  const configured = firebaseConfigured();
+  openModal('Settings', `
+    <div class="form-group">
+      <label class="form-label">Data Storage</label>
+      <div class="check-list">
+        <label class="check-list-item">
+          <input type="radio" name="mode" value="local" ${!useRemote ? 'checked' : ''}>
+          <span>Local</span>
+          <small>This device only</small>
+        </label>
+        <label class="check-list-item" ${!configured ? 'style="opacity:0.45"' : ''}>
+          <input type="radio" name="mode" value="remote" ${useRemote ? 'checked' : ''} ${!configured ? 'disabled' : ''}>
+          <span>Shared</span>
+          <small>${configured ? 'Syncs across devices via Firebase' : 'Requires firebase-config.js'}</small>
+        </label>
+      </div>
+    </div>
+    ${!configured ? `<p class="settings-note">To enable shared storage, create a free Firebase project and update <strong>firebase-config.js</strong> with your project credentials.</p>` : ''}
+  `, () => {
+    const selected = document.querySelector('input[name="mode"]:checked')?.value;
+    const wantRemote = selected === 'remote';
+    if (wantRemote === useRemote) return true;
+
+    if (wantRemote) {
+      if (!configured) { alert('Firebase not configured.'); return false; }
+      if (!confirm('Switch to shared data?\n\nYour local data stays on this device — it won\'t be copied to Firebase.')) return false;
+      render(); // show loading immediately
+      switchToRemote().then(ok => {
+        if (!ok) {
+          useRemote = false;
+          localStorage.setItem('dataMode', 'local');
+          alert('Could not connect to Firebase. Check your config.');
+          render();
+        }
+      });
+    } else {
+      if (!confirm('Switch to local data?\n\nShared data stays in Firebase and won\'t be affected.')) return false;
+      switchToLocal();
+    }
+    return true;
+  });
+}
+
+// ── Modal ─────────────────────────────────────────────────────────────────────
 
 let _saveHandler = null;
 
@@ -474,7 +653,7 @@ function _doSave() {
 
 el('modal').addEventListener('click', e => { if (e.target === el('modal')) closeModal(); });
 
-// ── SVG icons ────────────────────────────────────────────────────────────────
+// ── SVG icons ─────────────────────────────────────────────────────────────────
 
 function iconTrash() {
   return `<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>`;
@@ -485,17 +664,30 @@ function iconEdit() {
 function iconX() {
   return `<svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
 }
+function iconGear() {
+  return `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>`;
+}
 
-// ── Service worker registration ───────────────────────────────────────────────
+// ── Service worker ────────────────────────────────────────────────────────────
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 
-// ── Boot ─────────────────────────────────────────────────────────────────────
+// ── Boot ──────────────────────────────────────────────────────────────────────
 
 document.querySelectorAll('.nav-tab').forEach(tab =>
   tab.addEventListener('click', () => navigate(tab.dataset.tab))
 );
 
-render();
+if (useRemote && firebaseConfigured()) {
+  remoteLoading = true;
+  render();
+  loadFirebaseScripts()
+    .then(() => { if (initFirestoreDb()) startListeners(); else switchToLocal(); })
+    .catch(() => switchToLocal());
+} else {
+  if (useRemote) { useRemote = false; localStorage.setItem('dataMode', 'local'); }
+  loadLocal();
+  render();
+}
