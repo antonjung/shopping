@@ -1,4 +1,4 @@
-const VERSION = 'v1.5';
+const VERSION = 'v1.6';
 
 // ── Firebase config check ─────────────────────────────────────────────────────
 
@@ -659,6 +659,47 @@ function renderAddToShop() {
   `;
 }
 
+// ── Export / Import ───────────────────────────────────────────────────────────
+
+async function exportData() {
+  const data = JSON.stringify({ items: state.items, menus: state.menus, lists: state.lists }, null, 2);
+  const file = new File([data], 'shopping-backup.json', { type: 'application/json' });
+  try {
+    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: 'Shopping Backup' });
+      return;
+    }
+  } catch (e) { if (e.name === 'AbortError') return; }
+  const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = 'shopping-backup.json'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importData() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.json,application/json';
+  input.onchange = e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (!Array.isArray(data.items) || !Array.isArray(data.menus) || !Array.isArray(data.lists))
+          throw new Error();
+        if (!confirm(`Import ${data.items.length} items, ${data.menus.length} menus, ${data.lists.length} lists?\n\nThis replaces all current data.`)) return;
+        state.items = data.items; state.menus = data.menus; state.lists = data.lists;
+        saveLocal();
+        closeModal();
+        render();
+      } catch { alert('Invalid backup file.'); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 function openSettings() {
@@ -680,6 +721,19 @@ function openSettings() {
       </div>
     </div>
     ${!configured ? `<p class="settings-note">To enable shared storage, create a free Firebase project and update <strong>firebase-config.js</strong> with your project credentials.</p>` : ''}
+    <div class="form-group" style="margin-top:20px">
+      <label class="form-label">Data</label>
+      <div class="check-list">
+        <div class="check-list-item" onclick="exportData()" style="cursor:pointer">
+          <span>Export backup</span>
+          <small>Save JSON file</small>
+        </div>
+        <div class="check-list-item" onclick="importData()" style="cursor:pointer">
+          <span>Import backup</span>
+          <small>Restore from JSON file</small>
+        </div>
+      </div>
+    </div>
     <p class="settings-version">${VERSION}</p>
   `, () => {
     const selected = document.querySelector('input[name="mode"]:checked')?.value;
