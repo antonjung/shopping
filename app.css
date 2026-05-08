@@ -207,9 +207,11 @@ dialog {
   width: min(92vw, 420px);
   max-height: 88dvh;
   overflow: hidden;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.22);
+}
+dialog[open] {
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 40px rgba(0,0,0,0.22);
 }
 dialog::backdrop { background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
 
