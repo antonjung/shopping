@@ -420,15 +420,16 @@ dialog::backdrop { background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); -web
 
 .menu-select-name { flex: 1; font-size: 15px; }
 .menu-inline-date {
-  font-size: 12px;
+  font-size: 13px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 3px 5px;
+  padding: 2px 5px;
   background: var(--bg);
-  color: var(--text);
+  color: var(--text-2);
   flex-shrink: 0;
-  max-width: 120px;
+  max-width: 130px;
   -webkit-appearance: none;
+  font-family: inherit;
 }
 
 /* ── List dates display ───────────────────────────────────────────────────── */
