@@ -1,4 +1,4 @@
-const VERSION = 'v1.8';
+const VERSION = 'v1.9';
 
 // ── Firebase config check ─────────────────────────────────────────────────────
 

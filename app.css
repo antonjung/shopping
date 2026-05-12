@@ -264,8 +264,8 @@ dialog::backdrop { background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); -web
 .modal-cancel { color: var(--text-2); }
 .modal-save { color: var(--primary); font-weight: 600; text-align: right; }
 
-#modal-content { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
-.modal-body { padding: 16px; overflow-y: auto; flex: 1; min-height: 0; }
+#modal-content { display: flex; flex-direction: column; border-radius: inherit; overflow: hidden; }
+.modal-body { padding: 16px; overflow-y: auto; -webkit-overflow-scrolling: touch; max-height: calc(78dvh - env(safe-area-inset-top)); }
 
 .form-group { margin-bottom: 16px; }
 .form-group:last-child { margin-bottom: 0; }
