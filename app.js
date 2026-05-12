@@ -1,4 +1,4 @@
-const VERSION = 'v1.9';
+const VERSION = 'v2.0';
 
 // ── Firebase config check ─────────────────────────────────────────────────────
 
@@ -528,11 +528,7 @@ function renderLists() {
   return toggle + `<div class="card">${lists.map(list => {
     const done = list.items.filter(i => i.completed).length;
     const menuDisplay = listsShowDates
-      ? [...(list.menus || [])].sort((a, b) => {
-          if (!a.date && !b.date) return a.name.localeCompare(b.name);
-          if (!a.date) return 1; if (!b.date) return -1;
-          return a.date.localeCompare(b.date);
-        })
+      ? [...(list.menus || [])].filter(m => m.date).sort((a, b) => a.date.localeCompare(b.date))
       : [];
     return `
     <div class="card-item" style="flex-direction:column;align-items:stretch">
@@ -570,17 +566,12 @@ function openNewList() {
       <input type="search" class="search-input" placeholder="Search menus…" style="margin-bottom:8px"
         oninput="onMenuListSearch(this.value)" autocorrect="off" spellcheck="false">
       <div class="check-list">${menus.map(m => `
-        <div class="menu-select-item" data-name="${h(m.name).toLowerCase()}">
-          <label class="check-list-item">
-            <input type="checkbox" name="menus" value="${m.id}" onchange="onMenuToggle(this,'${m.id}')">
-            <span>${h(m.name)}</span>
-            <small>${m.items.length} items</small>
-          </label>
-          <div id="menu-date-${m.id}" class="menu-date-picker" style="display:none">
-            <label class="form-label" style="margin-bottom:4px">Date for this menu</label>
-            <input type="date" class="form-input" id="mdate-${m.id}" style="font-size:15px">
-          </div>
-        </div>
+        <label class="check-list-item menu-select-item" data-name="${h(m.name).toLowerCase()}">
+          <input type="checkbox" name="menus" value="${m.id}" onchange="onMenuToggle(this,'${m.id}')">
+          <span class="menu-select-name">${h(m.name)}</span>
+          <small id="mcount-${m.id}">${m.items.length} items</small>
+          <input type="date" class="menu-inline-date" id="mdate-${m.id}" style="display:none" onclick="event.stopPropagation()">
+        </label>
       `).join('')}</div>
     </div>
   `, () => {
@@ -607,8 +598,10 @@ function onMenuListSearch(value) {
 }
 
 function onMenuToggle(cb, menuId) {
-  const row = document.getElementById('menu-date-' + menuId);
-  if (row) row.style.display = cb.checked ? '' : 'none';
+  const dateInput = document.getElementById('mdate-' + menuId);
+  const count = document.getElementById('mcount-' + menuId);
+  if (dateInput) dateInput.style.display = cb.checked ? '' : 'none';
+  if (count) count.style.display = cb.checked ? 'none' : '';
 }
 
 function confirmDeleteList(id) {
