@@ -1,4 +1,4 @@
-const VERSION = 'v2.3';
+const VERSION = 'v2.4';
 
 // ── Firebase config check ─────────────────────────────────────────────────────
 
@@ -570,7 +570,10 @@ function openNewList() {
           <input type="checkbox" name="menus" value="${m.id}" onchange="onMenuToggle(this,'${m.id}')">
           <span class="menu-select-name">${h(m.name)}</span>
           <small id="mcount-${m.id}">${m.items.length} items</small>
-          <input type="date" class="menu-inline-date" id="mdate-${m.id}" style="display:none" onclick="event.stopPropagation()">
+          <div class="menu-date-wrap" id="dwrap-${m.id}" style="display:none" onclick="event.stopPropagation()">
+            <button type="button" class="menu-date-btn" id="dsbtn-${m.id}">Date</button>
+            <input type="date" class="menu-date-overlay" id="mdate-${m.id}" onchange="onDateChange('${m.id}',this.value)">
+          </div>
         </label>
       `).join('')}</div>
     </div>
@@ -598,10 +601,23 @@ function onMenuListSearch(value) {
 }
 
 function onMenuToggle(cb, menuId) {
-  const dateInput = document.getElementById('mdate-' + menuId);
+  const wrap = document.getElementById('dwrap-' + menuId);
   const count = document.getElementById('mcount-' + menuId);
-  if (dateInput) dateInput.style.display = cb.checked ? '' : 'none';
+  if (wrap) wrap.style.display = cb.checked ? '' : 'none';
   if (count) count.style.display = cb.checked ? 'none' : '';
+}
+
+function onDateChange(menuId, value) {
+  const btn = document.getElementById('dsbtn-' + menuId);
+  if (!btn) return;
+  if (value) {
+    const d = new Date(value + 'T00:00:00');
+    btn.textContent = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    btn.classList.add('has-date');
+  } else {
+    btn.textContent = 'Date';
+    btn.classList.remove('has-date');
+  }
 }
 
 function confirmDeleteList(id) {

@@ -419,17 +419,18 @@ dialog::backdrop { background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); -web
 /* ── Menu select (new list modal) ────────────────────────────────────────── */
 
 .menu-select-name { flex: 1; font-size: 15px; }
-.menu-inline-date {
-  font-size: 13px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 2px 6px;
-  background: var(--bg);
-  color: var(--text-2);
-  flex-shrink: 0;
-  width: 105px;
-  -webkit-appearance: none;
-  font-family: inherit;
+.menu-date-wrap { position: relative; flex-shrink: 0; }
+.menu-date-btn {
+  font-size: 13px; font-family: inherit;
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 10px; background: var(--bg); color: var(--text-2);
+  cursor: pointer; white-space: nowrap; display: block;
+}
+.menu-date-btn.has-date { color: var(--text); border-color: var(--primary); }
+.menu-date-overlay {
+  position: absolute; inset: 0;
+  opacity: 0; cursor: pointer;
+  width: 100%; height: 100%;
 }
 
 /* ── List dates display ───────────────────────────────────────────────────── */
