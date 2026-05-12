@@ -1,4 +1,4 @@
-const VERSION = 'v1.6';
+const VERSION = 'v1.7';
 
 // ── Firebase config check ─────────────────────────────────────────────────────
 
@@ -182,7 +182,7 @@ const db = {
     this._persist('menus', menuId, { name: m.name, items: m.items });
   },
 
-  createList(name, menuIds) {
+  createList(name, menuIds, menuInfos = []) {
     const itemMap = {};
     menuIds.forEach(mid => {
       const menu = state.menus.find(m => m.id === mid);
@@ -198,7 +198,8 @@ const db = {
     const list = {
       id: uid(),
       name: name.trim(),
-      items: Object.entries(itemMap).map(([id, { qty, menus }]) => ({ id, qty, menus, completed: false }))
+      items: Object.entries(itemMap).map(([id, { qty, menus }]) => ({ id, qty, menus, completed: false })),
+      menus: menuInfos
     };
     state.lists.push(list);
     this._persist('lists', list.id, { name: list.name, items: list.items });
@@ -250,16 +251,18 @@ let currentTab = 'items';
 let menuDetailId = null;
 let menuDetailSelectedOnly = false;
 let menuDetailSearch = '';
+let menusSearch = '';
 let activeListId = null;
 let shopShowAddMore = false;
 let shopAddMoreSearch = '';
 let itemsSort = 'name';
 let itemsSearch = '';
+let listsShowDates = false;
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 
 function navigate(tab) {
-  if (tab !== 'menus') { menuDetailId = null; menuDetailSelectedOnly = false; menuDetailSearch = ''; }
+  if (tab !== 'menus') { menuDetailId = null; menuDetailSelectedOnly = false; menuDetailSearch = ''; menusSearch = ''; }
   if (tab !== 'shop') { shopShowAddMore = false; shopAddMoreSearch = ''; }
   currentTab = tab;
   document.querySelectorAll('.nav-tab').forEach(t =>
@@ -386,22 +389,31 @@ function confirmDeleteItem(id) {
 // ── Menus view ────────────────────────────────────────────────────────────────
 
 function renderMenus() {
-  const menus = db.menus();
-  if (!menus.length) return `<div class="empty">No menus yet.<br>Tap + to create one.</div>`;
-  return `<div class="card">${menus.map(menu => `
-    <div class="card-item">
-      <div class="item-info" onclick="openMenuDetail('${menu.id}')">
-        <div class="item-name">${h(menu.name)}</div>
-        <div class="item-sub">${menu.items.length} item${menu.items.length !== 1 ? 's' : ''}</div>
-      </div>
-      <button class="btn-icon" onclick="openEditMenu('${menu.id}')" aria-label="Edit">
-        ${iconEdit()}
-      </button>
-      <button class="btn-icon btn-danger" onclick="confirmDeleteMenu('${menu.id}')" aria-label="Delete">
-        ${iconTrash()}
-      </button>
+  let menus = [...db.menus()].sort((a, b) => a.name.localeCompare(b.name));
+  if (menusSearch) {
+    const q = menusSearch.toLowerCase();
+    menus = menus.filter(m => m.name.toLowerCase().includes(q));
+  }
+  return `
+    <div class="list-controls">
+      <input id="menus-search" type="search" class="search-input" placeholder="Search…" value="${h(menusSearch)}"
+        oninput="onSearch(v=>menusSearch=v,'menus-search',this.value)" autocorrect="off" spellcheck="false">
     </div>
-  `).join('')}</div>`;
+    ${!menus.length
+      ? `<div class="empty">${menusSearch ? 'No matches.' : 'No menus yet.<br>Tap + to create one.'}</div>`
+      : `<div class="card">${menus.map(menu => `
+          <div class="card-item">
+            <div class="item-info" onclick="openMenuDetail('${menu.id}')">
+              <div class="item-name">${h(menu.name)}</div>
+              <div class="item-sub">${menu.items.length} item${menu.items.length !== 1 ? 's' : ''}</div>
+            </div>
+            <button class="btn-icon" onclick="openEditMenu('${menu.id}')" aria-label="Edit">
+              ${iconEdit()}
+            </button>
+            <button class="btn-icon btn-danger" onclick="confirmDeleteMenu('${menu.id}')" aria-label="Delete">
+              ${iconTrash()}
+            </button>
+          </div>`).join('')}</div>`}`;
 }
 
 function openMenuDetail(id) { menuDetailId = id; menuDetailSelectedOnly = false; menuDetailSearch = ''; render(); }
@@ -498,21 +510,47 @@ function confirmDeleteMenu(id) {
 
 // ── Lists view ────────────────────────────────────────────────────────────────
 
+function formatMenuDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const day = d.toLocaleDateString('en-GB', { weekday: 'short' });
+  const date = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  return `${day} ${date}`;
+}
+
 function renderLists() {
   const lists = db.lists();
-  if (!lists.length) return `<div class="empty">No lists yet.<br>Tap + to build one from your menus.</div>`;
-  return `<div class="card">${lists.map(list => {
+  const toggle = `
+    <div class="toggle-row" style="margin-bottom:12px">
+      <span class="toggle-label">Show menu dates</span>
+      <button class="toggle ${listsShowDates ? 'on' : ''}" onclick="listsShowDates=!listsShowDates;render()"></button>
+    </div>`;
+  if (!lists.length) return toggle + `<div class="empty">No lists yet.<br>Tap + to build one from your menus.</div>`;
+  return toggle + `<div class="card">${lists.map(list => {
     const done = list.items.filter(i => i.completed).length;
+    const menuDisplay = listsShowDates
+      ? [...(list.menus || [])].sort((a, b) => {
+          if (!a.date && !b.date) return a.name.localeCompare(b.name);
+          if (!a.date) return 1; if (!b.date) return -1;
+          return a.date.localeCompare(b.date);
+        })
+      : [];
     return `
-    <div class="card-item">
-      <div class="item-info" onclick="startShopping('${list.id}')">
-        <div class="item-name">${h(list.name)}</div>
-        <div class="item-sub">${list.items.length} item${list.items.length !== 1 ? 's' : ''}${done ? ' · ' + done + ' done' : ''}</div>
+    <div class="card-item" style="flex-direction:column;align-items:stretch">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div class="item-info" onclick="startShopping('${list.id}')">
+          <div class="item-name">${h(list.name)}</div>
+          <div class="item-sub">${list.items.length} item${list.items.length !== 1 ? 's' : ''}${done ? ' · ' + done + ' done' : ''}</div>
+        </div>
+        <button class="btn-text" onclick="startShopping('${list.id}')">Shop</button>
+        <button class="btn-icon btn-danger" onclick="confirmDeleteList('${list.id}')" aria-label="Delete">
+          ${iconTrash()}
+        </button>
       </div>
-      <button class="btn-text" onclick="startShopping('${list.id}')">Shop</button>
-      <button class="btn-icon btn-danger" onclick="confirmDeleteList('${list.id}')" aria-label="Delete">
-        ${iconTrash()}
-      </button>
+      ${menuDisplay.length ? `<div class="menu-dates-list">${menuDisplay.map(m => `
+        <div class="menu-date-item">
+          ${m.date ? `<span class="menu-date-label">${formatMenuDate(m.date)}</span>` : '<span class="menu-date-label menu-date-none">No date</span>'}
+          <span>${h(m.name)}</span>
+        </div>`).join('')}</div>` : ''}
     </div>`;
   }).join('')}</div>`;
 }
@@ -520,7 +558,7 @@ function renderLists() {
 function startShopping(listId) { activeListId = listId; shopShowAddMore = false; navigate('shop'); }
 
 function openNewList() {
-  const menus = db.menus();
+  const menus = [...db.menus()].sort((a, b) => a.name.localeCompare(b.name));
   if (!menus.length) { alert('Create some menus first.'); return; }
   openModal('New List', `
     <div class="form-group">
@@ -529,22 +567,48 @@ function openNewList() {
     </div>
     <div class="form-group">
       <label class="form-label">Include Menus</label>
+      <input type="search" class="search-input" placeholder="Search menus…" style="margin-bottom:8px"
+        oninput="onMenuListSearch(this.value)" autocorrect="off" spellcheck="false">
       <div class="check-list">${menus.map(m => `
-        <label class="check-list-item">
-          <input type="checkbox" name="menus" value="${m.id}">
-          <span>${h(m.name)}</span>
-          <small>${m.items.length} items</small>
-        </label>
+        <div class="menu-select-item" data-name="${h(m.name).toLowerCase()}">
+          <label class="check-list-item">
+            <input type="checkbox" name="menus" value="${m.id}" onchange="onMenuToggle(this,'${m.id}')">
+            <span>${h(m.name)}</span>
+            <small>${m.items.length} items</small>
+          </label>
+          <div id="menu-date-${m.id}" class="menu-date-picker" style="display:none">
+            <label class="form-label" style="margin-bottom:4px">Date for this menu</label>
+            <input type="date" class="form-input" id="mdate-${m.id}" style="font-size:15px">
+          </div>
+        </div>
       `).join('')}</div>
     </div>
   `, () => {
     const name = el('f-name').value.trim();
     if (!name) { el('f-name').focus(); return false; }
-    const menuIds = [...document.querySelectorAll('input[name="menus"]:checked')].map(i => i.value);
-    if (!menuIds.length) { alert('Select at least one menu.'); return false; }
-    db.createList(name, menuIds); render(); return true;
+    const checked = [...document.querySelectorAll('input[name="menus"]:checked')];
+    if (!checked.length) { alert('Select at least one menu.'); return false; }
+    const menuIds = checked.map(i => i.value);
+    const menuInfos = checked.map(i => ({
+      id: i.value,
+      name: state.menus.find(m => m.id === i.value)?.name || '',
+      date: document.getElementById('mdate-' + i.value)?.value || ''
+    }));
+    db.createList(name, menuIds, menuInfos); render(); return true;
   });
   setTimeout(() => el('f-name')?.focus(), 80);
+}
+
+function onMenuListSearch(value) {
+  const q = value.toLowerCase();
+  document.querySelectorAll('.menu-select-item').forEach(el => {
+    el.style.display = (!q || el.dataset.name.includes(q)) ? '' : 'none';
+  });
+}
+
+function onMenuToggle(cb, menuId) {
+  const row = document.getElementById('menu-date-' + menuId);
+  if (row) row.style.display = cb.checked ? '' : 'none';
 }
 
 function confirmDeleteList(id) {
