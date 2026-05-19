@@ -1,4 +1,4 @@
-const VERSION = 'v2.5';
+const VERSION = 'v2.6';
 
 // ── Firebase config check ─────────────────────────────────────────────────────
 
@@ -206,12 +206,35 @@ const db = {
       menus: menuInfos
     };
     state.lists.push(list);
-    this._persist('lists', list.id, { name: list.name, items: list.items });
+    this._persist('lists', list.id, { name: list.name, items: list.items, menus: list.menus });
     return list;
   },
   deleteList(id) {
     state.lists = state.lists.filter(l => l.id !== id);
     this._remove('lists', id);
+  },
+  updateList(listId, name, menuIds, menuInfos) {
+    const l = state.lists.find(l => l.id === listId);
+    if (!l) return;
+    const itemMap = {};
+    menuIds.forEach(mid => {
+      const menu = state.menus.find(m => m.id === mid);
+      if (!menu) return;
+      menu.items.forEach(mi => {
+        const iid = typeof mi === 'string' ? mi : mi.id;
+        const qty = typeof mi === 'string' ? 1 : (mi.qty || 1);
+        if (!itemMap[iid]) itemMap[iid] = { qty: 0, menus: [] };
+        itemMap[iid].qty += qty;
+        itemMap[iid].menus.push(menu.name);
+      });
+    });
+    const existingMap = new Map(l.items.map(i => [i.id, i]));
+    l.name = name.trim();
+    l.menus = menuInfos;
+    l.items = Object.entries(itemMap).map(([iid, { qty, menus }]) => ({
+      id: iid, qty, menus, completed: existingMap.get(iid)?.completed || false,
+    }));
+    this._persist('lists', listId, { name: l.name, items: l.items, menus: l.menus });
   },
   addItemToList(listId, itemId) {
     const l = state.lists.find(l => l.id === listId);
@@ -576,6 +599,9 @@ function renderLists() {
           <div class="item-sub">${list.items.length} item${list.items.length !== 1 ? 's' : ''}${done ? ' · ' + done + ' done' : ''}</div>
         </div>
         <button class="btn-text" onclick="startShopping('${list.id}')">Shop</button>
+        <button class="btn-icon" onclick="openEditList('${list.id}')" aria-label="Edit">
+          ${iconEdit()}
+        </button>
         <button class="btn-icon btn-danger" onclick="confirmDeleteList('${list.id}')" aria-label="Delete">
           ${iconTrash()}
         </button>
@@ -645,17 +671,17 @@ function onMenuToggle(cb, menuId) {
   if (count) count.style.display = cb.checked ? 'none' : '';
 }
 
+function formatDateVal(val) {
+  if (!val) return 'Date';
+  const d = new Date(val + 'T00:00:00');
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
 function onDateChange(menuId, value) {
   const btn = document.getElementById('dsbtn-' + menuId);
   if (!btn) return;
-  if (value) {
-    const d = new Date(value + 'T00:00:00');
-    btn.textContent = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-    btn.classList.add('has-date');
-  } else {
-    btn.textContent = 'Date';
-    btn.classList.remove('has-date');
-  }
+  btn.textContent = formatDateVal(value);
+  if (value) btn.classList.add('has-date'); else btn.classList.remove('has-date');
 }
 
 function confirmDeleteList(id) {
@@ -664,6 +690,54 @@ function confirmDeleteList(id) {
     if (activeListId === id) activeListId = null;
     db.deleteList(id); render();
   }
+}
+
+function openEditList(id) {
+  const list = db.getList(id);
+  if (!list) return;
+  const menus = [...db.menus()].sort((a, b) => a.name.localeCompare(b.name));
+  if (!menus.length) { alert('No menus available.'); return; }
+  const prevMenuIds = new Set((list.menus || []).map(m => m.id));
+  const prevDates = {};
+  (list.menus || []).forEach(m => { if (m.date) prevDates[m.id] = m.date; });
+  openModal('Edit List', `
+    <div class="form-group">
+      <label class="form-label">Name</label>
+      <input id="f-name" class="form-input" type="text" value="${h(list.name)}" autocapitalize="words">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Include Menus</label>
+      <input type="search" class="search-input" placeholder="Search menus…" style="margin-bottom:8px"
+        oninput="onMenuListSearch(this.value)" autocorrect="off" spellcheck="false">
+      <div class="check-list">${menus.map(m => {
+        const isChecked = prevMenuIds.has(m.id);
+        const dateVal = prevDates[m.id] || '';
+        return `
+        <label class="check-list-item menu-select-item" data-name="${h(m.name).toLowerCase()}">
+          <input type="checkbox" name="menus" value="${m.id}" ${isChecked ? 'checked' : ''} onchange="onMenuToggle(this,'${m.id}')">
+          <span class="menu-select-name">${h(m.name)}</span>
+          <small id="mcount-${m.id}" ${isChecked ? 'style="display:none"' : ''}>${m.items.length} items</small>
+          <div class="menu-date-wrap" id="dwrap-${m.id}" ${isChecked ? '' : 'style="display:none"'} onclick="event.stopPropagation()">
+            <button type="button" class="menu-date-btn ${dateVal ? 'has-date' : ''}" id="dsbtn-${m.id}">${formatDateVal(dateVal)}</button>
+            <input type="date" class="menu-date-overlay" id="mdate-${m.id}" value="${dateVal}" onchange="onDateChange('${m.id}',this.value)">
+          </div>
+        </label>`;
+      }).join('')}</div>
+    </div>
+  `, () => {
+    const name = el('f-name').value.trim();
+    if (!name) { el('f-name').focus(); return false; }
+    const checked = [...document.querySelectorAll('input[name="menus"]:checked')];
+    if (!checked.length) { alert('Select at least one menu.'); return false; }
+    const menuIds = checked.map(i => i.value);
+    const menuInfos = checked.map(i => ({
+      id: i.value,
+      name: state.menus.find(m => m.id === i.value)?.name || '',
+      date: document.getElementById('mdate-' + i.value)?.value || ''
+    }));
+    db.updateList(id, name, menuIds, menuInfos);
+    render(); return true;
+  });
 }
 
 // ── Shop view ─────────────────────────────────────────────────────────────────
@@ -941,7 +1015,7 @@ function openSettings() {
     if (wantRemote) {
       if (!configured) { alert('Firebase not configured.'); return false; }
       if (!confirm('Switch to shared data?\n\nYour local data stays on this device — it won\'t be copied to Firebase.')) return false;
-      state = { items: [], menus: [], lists: [] };
+      state = { items: [], menus: [], lists: [], notes: [] };
       remoteLoading = true;
       switchToRemote().then(ok => {
         if (!ok) {
