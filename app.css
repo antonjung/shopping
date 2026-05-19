@@ -457,6 +457,13 @@ dialog::backdrop { background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); -web
 .qty-btn:first-child { border-radius: 7px 0 0 7px; }
 .qty-btn:last-child { border-radius: 0 7px 7px 0; }
 .qty-btn:disabled { color: var(--border); cursor: default; }
+.btn-icon:disabled { opacity: 0.2; cursor: default; pointer-events: none; }
+/* ── Notes view ─────────────────────────────────────────────────────────────── */
+
+.note-item { transition: opacity 0.2s; }
+.note-item.done { opacity: 0.45; }
+.note-item.done .item-name { text-decoration: line-through; }
+
 .qty-val {
   width: 28px; height: 28px;
   display: flex; align-items: center; justify-content: center;

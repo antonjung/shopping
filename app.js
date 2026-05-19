@@ -1,4 +1,4 @@
-const VERSION = 'v2.4';
+const VERSION = 'v2.5';
 
 // ── Firebase config check ─────────────────────────────────────────────────────
 
@@ -8,7 +8,7 @@ function firebaseConfigured() {
 
 // ── Shared state ──────────────────────────────────────────────────────────────
 
-let state = { items: [], menus: [], lists: [] };
+let state = { items: [], menus: [], lists: [], notes: [] };
 let useRemote = localStorage.getItem('dataMode') === 'remote';
 let firestoreDb = null;
 let unsubscribers = [];
@@ -19,7 +19,7 @@ let remoteLoading = false;
 function loadLocal() {
   try {
     const saved = JSON.parse(localStorage.getItem('shopping'));
-    if (saved) { state.items = saved.items || []; state.menus = saved.menus || []; state.lists = saved.lists || []; }
+    if (saved) { state.items = saved.items || []; state.menus = saved.menus || []; state.lists = saved.lists || []; state.notes = saved.notes || []; }
   } catch {}
 }
 
@@ -58,7 +58,7 @@ function startListeners() {
   if (!firestoreDb) return;
   remoteLoading = true;
   let ready = 0;
-  const onReady = () => { if (++ready === 3) { remoteLoading = false; } };
+  const onReady = () => { if (++ready === 4) { remoteLoading = false; } };
 
   unsubscribers = [
     firestoreDb.collection('items').onSnapshot(snap => {
@@ -71,6 +71,10 @@ function startListeners() {
     }),
     firestoreDb.collection('lists').onSnapshot(snap => {
       state.lists = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      onReady(); render();
+    }),
+    firestoreDb.collection('notes').onSnapshot(snap => {
+      state.notes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       onReady(); render();
     }),
   ];
@@ -235,6 +239,30 @@ const db = {
     if (li) li.qty = Math.max(1, qty);
     this._persist('lists', listId, { name: l.name, items: l.items });
   },
+
+  notes: () => state.notes,
+  addNote(text) {
+    const note = { id: uid(), text: text.trim(), completed: false };
+    state.notes.push(note);
+    this._persist('notes', note.id, { text: note.text, completed: note.completed });
+    return note;
+  },
+  toggleNote(id) {
+    const n = state.notes.find(n => n.id === id);
+    if (!n) return;
+    n.completed = !n.completed;
+    this._persist('notes', n.id, { text: n.text, completed: n.completed });
+  },
+  deleteNote(id) {
+    state.notes = state.notes.filter(n => n.id !== id);
+    this._remove('notes', id);
+  },
+  clearCompletedNotes() {
+    const done = state.notes.filter(n => n.completed);
+    state.notes = state.notes.filter(n => !n.completed);
+    if (useRemote && firestoreDb) done.forEach(n => firestoreDb.collection('notes').doc(n.id).delete());
+    else saveLocal();
+  },
 };
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
@@ -258,12 +286,16 @@ let shopAddMoreSearch = '';
 let itemsSort = 'name';
 let itemsSearch = '';
 let listsShowDates = false;
+let shopSearch = '';
+let shopFixMode = false;
+let notesSearch = '';
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 
 function navigate(tab) {
   if (tab !== 'menus') { menuDetailId = null; menuDetailSelectedOnly = false; menuDetailSearch = ''; menusSearch = ''; }
-  if (tab !== 'shop') { shopShowAddMore = false; shopAddMoreSearch = ''; }
+  if (tab !== 'shop') { shopShowAddMore = false; shopAddMoreSearch = ''; shopSearch = ''; shopFixMode = false; }
+  if (tab !== 'notes') { notesSearch = ''; }
   currentTab = tab;
   document.querySelectorAll('.nav-tab').forEach(t =>
     t.classList.toggle('active', t.dataset.tab === tab)
@@ -314,9 +346,15 @@ function render() {
       el('header-title').textContent = 'Shop';
       el('header-right').innerHTML = '';
       if (activeListId && db.getList(activeListId)) {
-        el('header-right').innerHTML = `<button class="btn-text" onclick="activeListId=null;render()">Change</button>`;
+        el('header-right').innerHTML = `<button class="header-btn" onclick="openAddItemToShop()" style="margin-right:4px">+</button><button class="btn-text" onclick="activeListId=null;render()">Change</button>`;
       }
       el('main').innerHTML = renderShop();
+      break;
+
+    case 'notes':
+      el('header-title').textContent = 'Notes';
+      el('header-action').onclick = openAddNote;
+      el('main').innerHTML = renderNotes();
       break;
   }
 }
@@ -649,15 +687,21 @@ function renderShop() {
 
   const list = db.getList(activeListId);
   const allItems = db.items();
-  const listItems = list.items
+  const done = list.items.filter(i => i.completed).length;
+
+  let listItems = list.items
     .map(li => {
       const item = allItems.find(i => i.id === li.id);
       return item ? { ...item, completed: li.completed, qty: li.qty || li.count || 1, menus: li.menus || [] } : null;
     })
-    .filter(Boolean)
-    .sort((a, b) => (a.location || '').localeCompare(b.location || '') || a.name.localeCompare(b.name));
+    .filter(Boolean);
 
-  const done = listItems.filter(i => i.completed).length;
+  if (shopSearch) {
+    const q = shopSearch.toLowerCase();
+    listItems = listItems.filter(i => i.name.toLowerCase().includes(q) || (i.location || '').toLowerCase().includes(q));
+  }
+
+  listItems.sort((a, b) => (a.location || '').localeCompare(b.location || '') || a.name.localeCompare(b.name));
 
   const grouped = {};
   listItems.forEach(item => {
@@ -669,7 +713,15 @@ function renderShop() {
   return `
     <div class="shop-bar">
       <div class="shop-bar-name">${h(list.name)}</div>
-      <div class="shop-bar-progress">${done}/${listItems.length}</div>
+      <div class="shop-bar-progress">${done}/${list.items.length}</div>
+    </div>
+    <div class="list-controls" style="margin-bottom:8px">
+      <input id="shop-list-search" type="search" class="search-input" placeholder="Search list…" value="${h(shopSearch)}"
+        oninput="onSearch(v=>shopSearch=v,'shop-list-search',this.value)" autocorrect="off" spellcheck="false">
+    </div>
+    <div class="toggle-row" style="margin-bottom:12px">
+      <span class="toggle-label">Fix</span>
+      <button class="toggle ${shopFixMode ? 'on' : ''}" onclick="shopFixMode=!shopFixMode;render()"></button>
     </div>
     ${listItems.length ? Object.entries(grouped).map(([loc, items]) => `
       <div class="loc-label">${h(loc)}</div>
@@ -679,7 +731,7 @@ function renderShop() {
             <input type="checkbox" ${item.completed ? 'checked' : ''}
               onchange="db.toggleListItem('${activeListId}','${item.id}');render()">
           </label>
-          <div class="item-info" style="cursor:default">
+          <div class="item-info" style="cursor:pointer" onclick="openShopItemEdit('${item.id}')">
             <div class="item-name">${h(item.name)}</div>
             ${item.menus.length ? `<div class="item-menus">${h(item.menus.join(' · '))}</div>` : ''}
           </div>
@@ -688,12 +740,12 @@ function renderShop() {
             <span class="qty-val">${item.qty}</span>
             <button class="qty-btn" onclick="db.setListItemQty('${activeListId}','${item.id}',${item.qty + 1});render()">+</button>
           </div>
-          <button class="btn-icon btn-danger" onclick="db.removeFromList('${activeListId}','${item.id}');render()" aria-label="Remove">
+          <button class="btn-icon ${shopFixMode ? '' : 'btn-danger'}" onclick="db.removeFromList('${activeListId}','${item.id}');render()" ${shopFixMode ? 'disabled' : ''} aria-label="Remove">
             ${iconX()}
           </button>
         </div>
       `).join('')}</div>
-    `).join('') : '<div class="empty">List is empty.</div>'}
+    `).join('') : `<div class="empty">${shopSearch ? 'No matches.' : 'List is empty.'}</div>`}
     ${renderAddToShop()}
   `;
 }
@@ -732,10 +784,83 @@ function renderAddToShop() {
   `;
 }
 
+function openAddItemToShop() {
+  openModal('Add Item', itemForm(), () => {
+    const name = el('f-name').value.trim();
+    if (!name) { el('f-name').focus(); return false; }
+    if (!checkDupe(name)) return false;
+    const item = db.addItem(name, el('f-loc').value);
+    db.addItemToList(activeListId, item.id);
+    render(); return true;
+  });
+  setTimeout(() => el('f-name')?.focus(), 80);
+}
+
+function openShopItemEdit(itemId) {
+  const item = db.getItem(itemId);
+  if (!item) return;
+  openModal('Edit Aisle', `
+    <div class="form-group">
+      <label class="form-label">${h(item.name)}</label>
+      <input id="f-loc" class="form-input" type="text" inputmode="numeric" value="${h(item.location || '')}" placeholder="e.g. 5" autocorrect="off">
+    </div>
+  `, () => {
+    db.updateItem(itemId, item.name, el('f-loc').value);
+    render(); return true;
+  });
+  setTimeout(() => el('f-loc')?.focus(), 80);
+}
+
+// ── Notes view ────────────────────────────────────────────────────────────────
+
+function renderNotes() {
+  let notes = [...db.notes()];
+  if (notesSearch) {
+    const q = notesSearch.toLowerCase();
+    notes = notes.filter(n => n.text.toLowerCase().includes(q));
+  }
+  const hasDone = db.notes().some(n => n.completed);
+  return `
+    <div class="list-controls">
+      <input id="notes-search" type="search" class="search-input" placeholder="Search…" value="${h(notesSearch)}"
+        oninput="onSearch(v=>notesSearch=v,'notes-search',this.value)" autocorrect="off" spellcheck="false">
+      ${hasDone ? `<button class="sort-btn" onclick="db.clearCompletedNotes();render()">Clear done</button>` : ''}
+    </div>
+    ${!notes.length
+      ? `<div class="empty">${notesSearch ? 'No matches.' : 'No notes yet.<br>Tap + to add app ideas.'}</div>`
+      : `<div class="card">${notes.map(note => `
+          <div class="card-item note-item ${note.completed ? 'done' : ''}">
+            <label class="shop-check">
+              <input type="checkbox" ${note.completed ? 'checked' : ''}
+                onchange="db.toggleNote('${note.id}');render()">
+            </label>
+            <div class="item-info" style="cursor:default">
+              <div class="item-name">${h(note.text)}</div>
+            </div>
+            <button class="btn-icon btn-danger" onclick="db.deleteNote('${note.id}');render()" aria-label="Delete">
+              ${iconTrash()}
+            </button>
+          </div>`).join('')}</div>`}`;
+}
+
+function openAddNote() {
+  openModal('Add Note', `
+    <div class="form-group">
+      <label class="form-label">Note</label>
+      <input id="f-note" class="form-input" type="text" placeholder="e.g. Add dark mode" autocapitalize="sentences">
+    </div>
+  `, () => {
+    const text = el('f-note').value.trim();
+    if (!text) { el('f-note').focus(); return false; }
+    db.addNote(text); render(); return true;
+  });
+  setTimeout(() => el('f-note')?.focus(), 80);
+}
+
 // ── Export / Import ───────────────────────────────────────────────────────────
 
 async function exportData() {
-  const data = JSON.stringify({ items: state.items, menus: state.menus, lists: state.lists }, null, 2);
+  const data = JSON.stringify({ items: state.items, menus: state.menus, lists: state.lists, notes: state.notes }, null, 2);
   const file = new File([data], 'shopping-backup.json', { type: 'application/json' });
   try {
     if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -762,7 +887,7 @@ function importData() {
         if (!Array.isArray(data.items) || !Array.isArray(data.menus) || !Array.isArray(data.lists))
           throw new Error();
         if (!confirm(`Import ${data.items.length} items, ${data.menus.length} menus, ${data.lists.length} lists?\n\nThis replaces all current data.`)) return;
-        state.items = data.items; state.menus = data.menus; state.lists = data.lists;
+        state.items = data.items; state.menus = data.menus; state.lists = data.lists; state.notes = data.notes || [];
         saveLocal();
         closeModal();
         render();
@@ -898,6 +1023,9 @@ function iconEdit() {
 }
 function iconX() {
   return `<svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+}
+function iconNote() {
+  return `<svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`;
 }
 function iconGear() {
   return `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>`;
