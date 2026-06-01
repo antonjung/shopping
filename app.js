@@ -1,4 +1,4 @@
-const VERSION = 'v2.6';
+const VERSION = 'v2.7';
 
 // ── Firebase config check ─────────────────────────────────────────────────────
 
@@ -187,15 +187,17 @@ const db = {
   },
 
   createList(name, menuIds, menuInfos = []) {
+    const countMap = new Map(menuInfos.map(info => [info.id, info.count || 1]));
     const itemMap = {};
     menuIds.forEach(mid => {
       const menu = state.menus.find(m => m.id === mid);
       if (!menu) return;
+      const multiplier = countMap.get(mid) || 1;
       menu.items.forEach(mi => {
         const iid = typeof mi === 'string' ? mi : mi.id;
         const qty = typeof mi === 'string' ? 1 : (mi.qty || 1);
         if (!itemMap[iid]) itemMap[iid] = { qty: 0, menus: [] };
-        itemMap[iid].qty += qty;
+        itemMap[iid].qty += qty * multiplier;
         itemMap[iid].menus.push(menu.name);
       });
     });
@@ -216,15 +218,17 @@ const db = {
   updateList(listId, name, menuIds, menuInfos) {
     const l = state.lists.find(l => l.id === listId);
     if (!l) return;
+    const countMap = new Map(menuInfos.map(info => [info.id, info.count || 1]));
     const itemMap = {};
     menuIds.forEach(mid => {
       const menu = state.menus.find(m => m.id === mid);
       if (!menu) return;
+      const multiplier = countMap.get(mid) || 1;
       menu.items.forEach(mi => {
         const iid = typeof mi === 'string' ? mi : mi.id;
         const qty = typeof mi === 'string' ? 1 : (mi.qty || 1);
         if (!itemMap[iid]) itemMap[iid] = { qty: 0, menus: [] };
-        itemMap[iid].qty += qty;
+        itemMap[iid].qty += qty * multiplier;
         itemMap[iid].menus.push(menu.name);
       });
     });
@@ -630,27 +634,37 @@ function openNewList() {
       <input type="search" class="search-input" placeholder="Search menus…" style="margin-bottom:8px"
         oninput="onMenuListSearch(this.value)" autocorrect="off" spellcheck="false">
       <div class="check-list">${menus.map(m => `
-        <label class="check-list-item menu-select-item" data-name="${h(m.name).toLowerCase()}">
-          <input type="checkbox" name="menus" value="${m.id}" onchange="onMenuToggle(this,'${m.id}')">
+        <div class="check-list-item menu-select-item" data-name="${h(m.name).toLowerCase()}" data-id="${m.id}">
+          <div class="qty-stepper">
+            <button type="button" class="qty-btn" onclick="onMenuCountChange('${m.id}',-1)" id="mqdec-${m.id}" disabled>−</button>
+            <span class="qty-val" id="mqval-${m.id}">0</span>
+            <button type="button" class="qty-btn" onclick="onMenuCountChange('${m.id}',1)" id="mqinc-${m.id}">+</button>
+          </div>
           <span class="menu-select-name">${h(m.name)}</span>
           <small id="mcount-${m.id}">${m.items.length} items</small>
           <div class="menu-date-wrap" id="dwrap-${m.id}" style="display:none" onclick="event.stopPropagation()">
             <button type="button" class="menu-date-btn" id="dsbtn-${m.id}">Date</button>
             <input type="date" class="menu-date-overlay" id="mdate-${m.id}" onchange="onDateChange('${m.id}',this.value)">
           </div>
-        </label>
+        </div>
       `).join('')}</div>
     </div>
   `, () => {
     const name = el('f-name').value.trim();
     if (!name) { el('f-name').focus(); return false; }
-    const checked = [...document.querySelectorAll('input[name="menus"]:checked')];
-    if (!checked.length) { alert('Select at least one menu.'); return false; }
-    const menuIds = checked.map(i => i.value);
-    const menuInfos = checked.map(i => ({
-      id: i.value,
-      name: state.menus.find(m => m.id === i.value)?.name || '',
-      date: document.getElementById('mdate-' + i.value)?.value || ''
+    const selected = [];
+    document.querySelectorAll('.menu-select-item[data-id]').forEach(item => {
+      const menuId = item.dataset.id;
+      const count = parseInt(document.getElementById('mqval-' + menuId)?.textContent) || 0;
+      if (count > 0) selected.push({ id: menuId, count });
+    });
+    if (!selected.length) { alert('Select at least one menu.'); return false; }
+    const menuIds = selected.map(s => s.id);
+    const menuInfos = selected.map(s => ({
+      id: s.id,
+      name: state.menus.find(m => m.id === s.id)?.name || '',
+      date: document.getElementById('mdate-' + s.id)?.value || '',
+      count: s.count
     }));
     db.createList(name, menuIds, menuInfos); render(); return true;
   });
@@ -664,11 +678,17 @@ function onMenuListSearch(value) {
   });
 }
 
-function onMenuToggle(cb, menuId) {
+function onMenuCountChange(menuId, delta) {
+  const valEl = document.getElementById('mqval-' + menuId);
+  if (!valEl) return;
+  const next = Math.max(0, (parseInt(valEl.textContent) || 0) + delta);
+  valEl.textContent = next;
+  const decBtn = document.getElementById('mqdec-' + menuId);
+  if (decBtn) decBtn.disabled = next <= 0;
   const wrap = document.getElementById('dwrap-' + menuId);
-  const count = document.getElementById('mcount-' + menuId);
-  if (wrap) wrap.style.display = cb.checked ? '' : 'none';
-  if (count) count.style.display = cb.checked ? 'none' : '';
+  const countEl = document.getElementById('mcount-' + menuId);
+  if (wrap) wrap.style.display = next > 0 ? '' : 'none';
+  if (countEl) countEl.style.display = next > 0 ? 'none' : '';
 }
 
 function formatDateVal(val) {
@@ -697,9 +717,9 @@ function openEditList(id) {
   if (!list) return;
   const menus = [...db.menus()].sort((a, b) => a.name.localeCompare(b.name));
   if (!menus.length) { alert('No menus available.'); return; }
-  const prevMenuIds = new Set((list.menus || []).map(m => m.id));
+  const prevMenuCounts = {};
   const prevDates = {};
-  (list.menus || []).forEach(m => { if (m.date) prevDates[m.id] = m.date; });
+  (list.menus || []).forEach(m => { prevMenuCounts[m.id] = m.count || 1; if (m.date) prevDates[m.id] = m.date; });
   openModal('Edit List', `
     <div class="form-group">
       <label class="form-label">Name</label>
@@ -710,30 +730,40 @@ function openEditList(id) {
       <input type="search" class="search-input" placeholder="Search menus…" style="margin-bottom:8px"
         oninput="onMenuListSearch(this.value)" autocorrect="off" spellcheck="false">
       <div class="check-list">${menus.map(m => {
-        const isChecked = prevMenuIds.has(m.id);
+        const count = prevMenuCounts[m.id] || 0;
         const dateVal = prevDates[m.id] || '';
         return `
-        <label class="check-list-item menu-select-item" data-name="${h(m.name).toLowerCase()}">
-          <input type="checkbox" name="menus" value="${m.id}" ${isChecked ? 'checked' : ''} onchange="onMenuToggle(this,'${m.id}')">
+        <div class="check-list-item menu-select-item" data-name="${h(m.name).toLowerCase()}" data-id="${m.id}">
+          <div class="qty-stepper">
+            <button type="button" class="qty-btn" onclick="onMenuCountChange('${m.id}',-1)" id="mqdec-${m.id}" ${count <= 0 ? 'disabled' : ''}>−</button>
+            <span class="qty-val" id="mqval-${m.id}">${count}</span>
+            <button type="button" class="qty-btn" onclick="onMenuCountChange('${m.id}',1)" id="mqinc-${m.id}">+</button>
+          </div>
           <span class="menu-select-name">${h(m.name)}</span>
-          <small id="mcount-${m.id}" ${isChecked ? 'style="display:none"' : ''}>${m.items.length} items</small>
-          <div class="menu-date-wrap" id="dwrap-${m.id}" ${isChecked ? '' : 'style="display:none"'} onclick="event.stopPropagation()">
+          <small id="mcount-${m.id}" ${count > 0 ? 'style="display:none"' : ''}>${m.items.length} items</small>
+          <div class="menu-date-wrap" id="dwrap-${m.id}" ${count > 0 ? '' : 'style="display:none"'} onclick="event.stopPropagation()">
             <button type="button" class="menu-date-btn ${dateVal ? 'has-date' : ''}" id="dsbtn-${m.id}">${formatDateVal(dateVal)}</button>
             <input type="date" class="menu-date-overlay" id="mdate-${m.id}" value="${dateVal}" onchange="onDateChange('${m.id}',this.value)">
           </div>
-        </label>`;
+        </div>`;
       }).join('')}</div>
     </div>
   `, () => {
     const name = el('f-name').value.trim();
     if (!name) { el('f-name').focus(); return false; }
-    const checked = [...document.querySelectorAll('input[name="menus"]:checked')];
-    if (!checked.length) { alert('Select at least one menu.'); return false; }
-    const menuIds = checked.map(i => i.value);
-    const menuInfos = checked.map(i => ({
-      id: i.value,
-      name: state.menus.find(m => m.id === i.value)?.name || '',
-      date: document.getElementById('mdate-' + i.value)?.value || ''
+    const selected = [];
+    document.querySelectorAll('.menu-select-item[data-id]').forEach(item => {
+      const menuId = item.dataset.id;
+      const count = parseInt(document.getElementById('mqval-' + menuId)?.textContent) || 0;
+      if (count > 0) selected.push({ id: menuId, count });
+    });
+    if (!selected.length) { alert('Select at least one menu.'); return false; }
+    const menuIds = selected.map(s => s.id);
+    const menuInfos = selected.map(s => ({
+      id: s.id,
+      name: state.menus.find(m => m.id === s.id)?.name || '',
+      date: document.getElementById('mdate-' + s.id)?.value || '',
+      count: s.count
     }));
     db.updateList(id, name, menuIds, menuInfos);
     render(); return true;
