@@ -1,4 +1,4 @@
-const VERSION = 'v2.7';
+const VERSION = 'v2.8';
 
 // ── Firebase config check ─────────────────────────────────────────────────────
 
@@ -770,6 +770,35 @@ function openEditList(id) {
   });
 }
 
+// ── Shop item long-press (edit) / short-tap (toggle) ─────────────────────────
+
+let _slpTimer = null;
+let _slpFired = false;
+
+function onShopTouchStart(e, listId, itemId) {
+  _slpFired = false;
+  _slpTimer = setTimeout(() => {
+    _slpFired = true;
+    _slpTimer = null;
+    openShopItemEdit(itemId);
+  }, 600);
+}
+
+function onShopTouchEnd(e, listId, itemId) {
+  e.preventDefault(); // always suppress synthetic click
+  if (_slpTimer) { clearTimeout(_slpTimer); _slpTimer = null; }
+  if (!_slpFired) {
+    db.toggleListItem(listId, itemId);
+    render();
+  }
+  _slpFired = false;
+}
+
+function onShopTouchCancel() {
+  if (_slpTimer) { clearTimeout(_slpTimer); _slpTimer = null; }
+  _slpFired = false;
+}
+
 // ── Shop view ─────────────────────────────────────────────────────────────────
 
 function renderShop() {
@@ -835,7 +864,12 @@ function renderShop() {
             <input type="checkbox" ${item.completed ? 'checked' : ''}
               onchange="db.toggleListItem('${activeListId}','${item.id}');render()">
           </label>
-          <div class="item-info" style="cursor:pointer" onclick="openShopItemEdit('${item.id}')">
+          <div class="item-info" style="cursor:pointer;user-select:none"
+            ontouchstart="onShopTouchStart(event,'${activeListId}','${item.id}')"
+            ontouchend="onShopTouchEnd(event,'${activeListId}','${item.id}')"
+            ontouchcancel="onShopTouchCancel()"
+            oncontextmenu="return false"
+            onclick="if(!_slpFired){db.toggleListItem('${activeListId}','${item.id}');render()}">
             <div class="item-name">${h(item.name)}</div>
             ${item.menus.length ? `<div class="item-menus">${h(item.menus.join(' · '))}</div>` : ''}
           </div>
